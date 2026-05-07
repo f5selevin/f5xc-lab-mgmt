@@ -1,6 +1,6 @@
 import setupAutomation from './setupAutomation.mjs';
 
-const f5xcLabMgmtDomain = 'https://f5xclabmgmt.emea-ent.f5demos.com';
+const f5xcLabMgmtDomain = 'https://f5xclabmgmt.emea.f5demos.com';
 
 const args = process.argv.slice(2);
 const course = args[0];
