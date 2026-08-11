@@ -21,10 +21,10 @@ TFOUTPUT=$(terraform output -json)
 
 
 DEPLOYMENT=$(curl -s http://metadata.udf/deployment)
+LAB_ID=$(echo $DEPLOYMENT | jq -r '.deployment.labId // .deployment.lab_id // .deployment.labid // .deployment.deploymentId // .deployment.deployment_id // .deployment.id // .labId // .lab_id // .labid // .deploymentId // .deployment_id // .id // empty')
 
 
-
-template='{"email": "%s", "udfHost": "%s", "region": "%s", "awsAccountId": "%s", "awsApiKey": "%s", "awsApiSecret": "%s", "awsAz": "%s", "awsRegion": "%s", "subnetId": "%s", "vpcId": "%s" }'
+template='{"email": "%s", "udfHost": "%s", "region": "%s", "awsAccountId": "%s", "awsApiKey": "%s", "awsApiSecret": "%s", "awsAz": "%s", "awsRegion": "%s", "subnetId": "%s", "vpcId": "%s", "labId": "%s" }'
 printf -v data "$template" \
         "$(echo $DEPLOYMENT | jq -r .deployment.deployer)" \
         "$(echo $DEPLOYMENT | jq -r .deployment.host)" \
@@ -36,6 +36,7 @@ printf -v data "$template" \
         "$(echo $TFOUTPUT | jq -r .region.value)" \
         "$(echo $TFOUTPUT | jq -r .subnet_id.value)" \
         "$(echo $TFOUTPUT | jq -r .vpc_id.value)" \
+        "$LAB_ID" \
 
 
 #curl -X POST -H "Content-Type: application/json" -d $data http://localhost:8080/v1/student

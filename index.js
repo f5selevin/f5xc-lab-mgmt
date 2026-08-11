@@ -3,17 +3,33 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 
-import fastify from './api.js';
+import { closeDatabase, initializeDatabase } from './database.js';
+
+let fastify;
 
 
 const start = async () => {
     try {
-        
-        await fastify.listen({ port:8080, host: '0.0.0.0' });
-        
+        await initializeDatabase();
+        ({ default: fastify } = await import('./api.js'));
+        await fastify.listen({ port: 8080, host: '0.0.0.0' });
+
     } catch (err) {
-        fastify.log.error(err);
-        process.exit(1)
+        if (fastify) fastify.log.error(err);
+        else console.error(err);
+        await closeDatabase().catch(() => undefined);
+        process.exit(1);
     }
 };
+
+const shutdown = async (signal) => {
+    fastify?.log.info(`${signal} received, shutting down`);
+    if (fastify) await fastify.close();
+    await closeDatabase();
+    process.exit(0);
+};
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
 start();

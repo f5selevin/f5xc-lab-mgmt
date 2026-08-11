@@ -11,10 +11,10 @@
     "lodash": "^4.17.21",
     "lowdb": "^3.0.0",
     "path": "^0.12.7",
+    "pg": "^8.22.0",
     "pino-pretty": "^9.1.0",
     "url": "^0.11.0"
   },
-  "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
