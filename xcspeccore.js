@@ -6,10 +6,19 @@ class Xcspeccore extends Course {
     }
 
     async newStudent({ email, namespace: requestedNamespace, deploymentId, udfHost, ip, region, log }) {
-        const initialized = await super.newStudent({ email, namespace: requestedNamespace, deploymentId, udfHost, ip, region, log });
+        const initialized = await super.newStudent({
+            email,
+            namespace: requestedNamespace,
+            deploymentId,
+            udfHost,
+            ip,
+            region,
+            log,
+            recreateExisting: true
+        });
         if (initialized.status === 'error') return initialized;
 
-        const { hash, makeId, ceOnPrem, createdNames, smsv2Site, namespace } = initialized;
+        const { hash, makeId, ceOnPrem, createdNames, smsv2Site, namespace, recreated } = initialized;
         let err;
 
         await this.f5xc.updateUserForSpecCore({ email, nsName: namespace }).catch((error) => {
@@ -53,7 +62,7 @@ class Xcspeccore extends Course {
             failedChecks: 0
         };
         await this.db.write();
-        log.info('Student created');
+        log.info(recreated ? 'Student recreated' : 'Student created');
         return this.db.data.students[hash];
     }
 }

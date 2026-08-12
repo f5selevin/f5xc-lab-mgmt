@@ -69,14 +69,13 @@ class Course {
         return { ...createdNames, hostArcadia, ceArcadia, ollama };
     }
 
-    async newStudent({ email, namespace: requestedNamespace, deploymentId, dep_id: depId, hostArcadia, ceArcadia, udfHost, ip, region, awsAccountId, awsApiKey, awsApiSecret, awsRegion, awsAz, vpcId, subnetId, log }) {
+    async newStudent({ email, namespace: requestedNamespace, deploymentId, dep_id: depId, hostArcadia, ceArcadia, udfHost, ip, region, awsAccountId, awsApiKey, awsApiSecret, awsRegion, awsAz, vpcId, subnetId, log, recreateExisting = false }) {
         await this.ready;
         const createdNames = createNames(email);
         const { lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, smsv2Site } = createdNames;
         const udfDeploymentId = deploymentId || depId;
         let userAvailable = false;
-        const hash = generateHash([lowerEmail]);
-        this.log[hash] = log;
+        let hash = generateHash([lowerEmail]);
 
         const studentValidity = await validateUdfRequest({ udfHost, ip }).catch((e) => log.warn({ operation: 'validateStudent', e })).catch((e) => {
             log.warn({ operation: 'studentValidity', ...e });
@@ -114,11 +113,22 @@ class Course {
                 return { status: 'error', operation: 'getUsersNs', error };
             }
 
+            let recreated = false;
+            if (recreateExisting) {
+                const existingEntry = Object.entries(this.db.data.students).find(([, student]) => {
+                    const studentDeploymentId = student.deploymentId || student.createdNames?.deploymentId;
+                    return student.email?.toLowerCase() === lowerEmail && studentDeploymentId === udfDeploymentId;
+                });
+                recreated = Boolean(existingEntry);
+                hash = existingEntry?.[0] || generateHash([lowerEmail, udfDeploymentId]);
+            }
+            this.log[hash] = log;
+
             createdNames.namespace = requestedNamespace;
             createdNames.deploymentId = udfDeploymentId;
             smsv2Site.siteName = `smsv2-${requestedNamespace}`;
             smsv2Site.tokenName = `smsv2-token-${requestedNamespace}`;
-            return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site };
+            return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site, recreated };
 
         } else {
             log.warn('Student creation failed');
