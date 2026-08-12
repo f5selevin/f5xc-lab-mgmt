@@ -9,72 +9,22 @@ Lightsail normally requires TLS, which is enabled by default. Set `PGSSLMODE=ver
 
 ## Per-workshop F5XC credentials
 
-
-Production requires `F5XC_CREDENTIALS_BASE64`. Its value is a base64-encoded JSON document containing the XC domain and API key for each workshop.
-
-Create `credentials.json` with this structure:
+Production requires `F5XC_CREDENTIALS_BASE64`, containing base64-encoded JSON with an `xcspeccore` API key. String values use the common XC address from `F5XC_URL` during deployment (`F5XC_DOMAIN` inside the container):
 
 ```json README.md
-
-{
-  "xcspeccore": {
-    "domain": "msp1.console.ves.volterra.io",
-    "key": "123123"
-  },
-  "xcspecsecurity": {
-    "domain": "msp2.console.ves.volterra.io",
-    "key": "123123"
-  },
-  "xcspecaut": {
-    "domain": "msp3.console.ves.volterra.io",
-    "key": "123123"
-  }
-}
+{ "xcspeccore": "key1", "xcspecsecurity": "key2", "xcspecautomation": "key3" }
 ```
 
-
-Validate that the file is valid JSON and that all required entries contain non-empty `domain` and `key` strings:
+Generate the value without introducing a newline:
 
 ```shell README.md
-
-jq -e '
-  . as $root |
-  type == "object" and
-  (["xcspeccore", "xcspecsecurity", "xcspecaut"] | all(
-    . as $name |
-    ($root[$name] | type == "object") and
-    ($root[$name].domain | type == "string" and length > 0) and
-    ($root[$name].key | type == "string" and length > 0)
-  ))
-' credentials.json >/dev/null
+printf '%s' '{"xcspeccore":"key1","xcspecsecurity":"key2","xcspecautomation":"key3"}' | base64
 ```
 
+A workshop can override the common address by using an object:
 
-Validate and base64-encode it as a single line. The output file is written only when validation succeeds:
-
-
-
-```shell README.md
-jq -e '
-  . as $root |
-  type == "object" and
-  (["xcspeccore", "xcspecsecurity", "xcspecaut"] | all(
-    . as $name |
-    ($root[$name] | type == "object") and
-    ($root[$name].domain | type == "string" and length > 0) and
-    ($root[$name].key | type == "string" and length > 0)
-  ))
-' credentials.json >/dev/null \
-  && base64 < credentials.json | tr -d '\n' > credentials.json.b64
+```json README.md
+{ "xcspeccore": { "domain": "tenant.console.ves.volterra.io", "key": "key1" } }
 ```
 
-
-Add the encoded value to `.env`:
-
-```shell README.md
-printf 'F5XC_CREDENTIALS_BASE64=%s\n' "$(cat credentials.json.b64)" >> .env
-```
-
-`deploy-lightsail.sh` validates the encoded JSON and its `xcspeccore` entry before building. It injects `F5XC_CREDENTIALS_BASE64` into the Lightsail container as a runtime environment variable. The application selects the object matching the requested workshop and uses that object's `domain` and `key` to connect to XC.
-
-The credential is intentionally not baked into the Docker image or stored in an image layer. `F5XC_DOMAIN`, derived from the legacy `F5XC_URL`, is also injected as a backwards-compatible fallback but does not override an object-level `domain`.
+Set the result in `.env` as `F5XC_CREDENTIALS_BASE64`. `deploy-lightsail.sh` validates it before building and injects both `F5XC_CREDENTIALS_BASE64` and `F5XC_DOMAIN` into the Lightsail container environment. The secret is intentionally not stored in the Docker image.
