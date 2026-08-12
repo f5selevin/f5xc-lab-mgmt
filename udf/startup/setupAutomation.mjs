@@ -357,18 +357,15 @@ class setupAutomation {
     let state = 3, error, output;
     try {
       const createdUserData = this.db.data.functions.f5xcCreateUserEnv.output;
-      const isSpecCore = this.courseId === 'xcspeccore';
-      const address = isSpecCore ? this.db.data.udfMetadata.ceManagementAddress : '10.1.1.5';
+      const address = this.db.data.udfMetadata.ceManagementAddress;
       const ip = `${address}:65500`;
 
       const onPremCePostData = {
-        token: isSpecCore ? createdUserData.smsv2Site.token : '771e948b-f6ef-4338-9b50-953762f7a2a7',
-        cluster_name: isSpecCore ? createdUserData.smsv2Site.siteName : createdUserData.createdNames.ceOnPrem.clusterName,
+        token: createdUserData.smsv2Site.token,
+        cluster_name: createdUserData.smsv2Site.siteName,
         hostname: createdUserData.createdNames.ceOnPrem.hostname,
         latitude: '32.06440042393975',
-        longitude: '34.894059728328465',
-        certified_hardware: 'kvm-voltmesh',
-        primary_outside_nic: 'eth0'
+        longitude: '34.894059728328465'
       }
 
       const url = `https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`;
