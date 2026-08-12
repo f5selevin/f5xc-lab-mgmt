@@ -106,14 +106,17 @@ class Course {
                     const user = users.items.find(
                         (item) => item.email?.toLowerCase() === lowerEmail
                     );
-                    namespace = user?.namespace_roles?.[0]?.namespace;
+                    const namespaceRole = user?.namespace_roles?.find(
+                        (item) => ['ves-io-admin-role', 'ves-io-power-developer-role'].includes(item.role)
+                    );
+                    namespace = namespaceRole?.namespace;
                 } catch (error) {
                     log.warn({ operation: 'getUsersNs', error });
                 }
             }
 
             if (!namespace) {
-                const error = `Could not find user ${email} with a namespace`;
+                const error = `Could not find user ${email} with an admin or power-developer namespace role`;
                 log.warn({ operation: 'getUsersNs', error });
                 return { status: 'error', operation: 'getUsersNs', error };
             }

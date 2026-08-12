@@ -143,6 +143,23 @@ class F5xc {
         });
     }
 
+    async mergeNamespaceRoles(email, requestedRoles) {
+        const users = await this.getUsersNs();
+        const user = users.items.find(
+            (item) => item.email?.toLowerCase() === email.toLowerCase()
+        );
+
+        if (!user) {
+            throw new Error(`Could not find user ${email} while adding namespace roles`);
+        }
+
+        const rolesByNamespaceAndName = new Map();
+        for (const role of [...(user.namespace_roles || []), ...requestedRoles]) {
+            rolesByNamespaceAndName.set(`${role.namespace}:${role.role}`, role);
+        }
+        return [...rolesByNamespaceAndName.values()];
+    }
+
     async updateUserForK8s({ email, nsName }) {
         const endPoint = '/api/web/custom/namespaces/system/user_roles';
         const data = {
@@ -177,6 +194,7 @@ class F5xc {
             'type': 'USER'
         }
 
+        data.namespace_roles = await this.mergeNamespaceRoles(email, data.namespace_roles);
         await this.axios.put(endPoint, data, {
             'axios-retry': {
                 retries: 0
@@ -218,6 +236,7 @@ class F5xc {
             type: 'USER'
         };
 
+        data.namespace_roles = await this.mergeNamespaceRoles(email, data.namespace_roles);
         await this.axios.put(endPoint, data, {
             'axios-retry': {
                 retries: 0
@@ -259,6 +278,7 @@ class F5xc {
             'type': 'USER'
         }
 
+        data.namespace_roles = await this.mergeNamespaceRoles(email, data.namespace_roles);
         await this.axios.put(endPoint, data, {
             'axios-retry': {
                 retries: 0
@@ -296,6 +316,7 @@ class F5xc {
             'type': 'USER'
         }
 
+        data.namespace_roles = await this.mergeNamespaceRoles(email, data.namespace_roles);
         await this.axios.put(endPoint, data, {
             'axios-retry': {
                 retries: 0

@@ -371,23 +371,48 @@ class setupAutomation {
         primary_outside_nic: 'eth0'
       }
 
-      logger.info({ address: ip }, 'CE address found');
-      logger.info({
-        clusterName: onPremCePostData.cluster_name,
-        hostname: onPremCePostData.hostname
-      }, 'CE configuration requested');
-      logger.info({ token: onPremCePostData.token }, 'CE registration token provided');
+      const url = `https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`;
+      const headers = {
+        Authorization: 'Basic YWRtaW46Vm9sdGVycmExMjM=',
+        'Content-Type': 'application/json'
+      };
 
-      output = (await axios.post(`https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`, onPremCePostData, {
-        headers: {
-          Authorization: 'Basic YWRtaW46Vm9sdGVycmExMjM='
+      logger.info({
+        request: {
+          method: 'POST',
+          url,
+          headers,
+          data: onPremCePostData
         }
-      })).data;
+      }, 'registerOnPremCe full HTTP call');
+
+      const response = await axios.post(url, onPremCePostData, { headers });
+      output = response.data;
+
+      logger.info({
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+          data: response.data
+        }
+      }, 'registerOnPremCe server response');
 
       state = 1;
     } catch (e) {
       state = 2;
-      error = e.stack || e;
+      const errorDetails = {
+        message: e.message,
+        code: e.code,
+        status: e.response?.status,
+        statusText: e.response?.statusText,
+        headers: e.response?.headers,
+        data: e.response?.data,
+        stack: e.stack
+      };
+      logger.error({ response: errorDetails }, 'registerOnPremCe request failed');
+      output = e.response?.data;
+      error = errorDetails;
     }
 
     return { state, output, error };
