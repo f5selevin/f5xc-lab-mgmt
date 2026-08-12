@@ -1,18 +1,30 @@
 import setupAutomation from './setupAutomation.mjs';
 
-const f5xcLabMgmtDomain = 'https://f5xclabmgmt.emea.f5demos.com';
+const f5xcLabMgmtDomain = 'https://xs.partner-spec.f5demos.com/';
 
 const args = process.argv.slice(2);
 const course = args[0];
-console.log('Args are',args);
+console.log('Args are', args);
 
 
 let runSetup;
 
 const main = async () => {
   switch (course) {
+    case 'xcspeccore':
+      runSetup = new setupAutomation({
+        courseId: course,
+        f5xcLabMgmtDomain,
+        steps: [
+          'f5xcCreateUserEnv',
+          'registerOnPremCe'
+        ]
+      })
+      await runSetup.run();
+      break;
+
     case 'f5xcemeaworkshop':
-        runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
         steps: [
@@ -28,33 +40,33 @@ const main = async () => {
       break;
 
     case 'apisecurityshiftleft':
-        runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
+        steps: [
           'f5xcCreateUserEnv',
           'registerOnPremCeApiSecurityShiftLeft',
         ]
       })
       await runSetup.run();
-      break;      
+      break;
 
-    case 'f5xcemeaapiworkshop':      
-      runSetup = new setupAutomation ({ 
+    case 'f5xcemeaapiworkshop':
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
-          'f5xcCreateUserEnv'      
+        steps: [
+          'f5xcCreateUserEnv'
         ]
-      })    
-      await runSetup.run();  
+      })
+      await runSetup.run();
       break;
 
     case 'f5xcemeak8sworkshop':
-      runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
+        steps: [
           'f5xcCreateUserEnv'
         ]
       })
@@ -62,10 +74,10 @@ const main = async () => {
       break;
 
     case 'f5xcemeaaiworkshop':
-      runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
+        steps: [
           'f5xcCreateUserEnv'
         ]
       })
@@ -73,41 +85,41 @@ const main = async () => {
       break;
 
     case 'f5xcemeaaigwworkshop':
-      runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
+        steps: [
           'terraform_aigw',
-          'f5xcCreateUserEnv'          
+          'f5xcCreateUserEnv'
         ]
       })
       await runSetup.run();
       break;
 
     case 'agility2025aigw':
-      runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
-          'terraform_aigw_agility',        
+        steps: [
+          'terraform_aigw_agility',
         ]
       })
       await runSetup.run();
-      break;   
+      break;
 
     case 'appworld2025':
-      runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
-        steps: [          
-          'terraform_aigw_appworld2025',        
+        steps: [
+          'terraform_aigw_appworld2025',
         ]
       })
       await runSetup.run();
-      break;         
+      break;
 
     case 'f5xcemeamcnworkshop':
-        runSetup = new setupAutomation ({ 
+      runSetup = new setupAutomation({
         courseId: course,
         f5xcLabMgmtDomain,
         steps: [

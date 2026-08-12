@@ -13,8 +13,6 @@ sleep 60
 touch /home/ubuntu/startup/deployed
 
 
-
-
 export PATH=/home/ubuntu/.nvm/versions/node/v18.16.0/bin/:$PATH
 
 rm -rf /home/ubuntu/lab
@@ -37,15 +35,15 @@ if [[ $result == *"template"* ]]; then
   echo "This is only a template"
 else
   echo "Instaling lab"
-  git clone https://github.com/sorinboia/f5xc-lab-mgmt.git /home/ubuntu/lab
+  git clone https://github.com/f5selevin/f5xc-lab-mgmt /home/ubuntu/lab
   cd /home/ubuntu/lab/udf/startup
-  npm install && node startup.mjs f5xcemeaworkshop
+  npm install && node startup.mjs xcspeccore
   j=0
   while [ -f "/home/ubuntu/startup/error" ] && [ "$j" -lt 10 ]
   do
     echo "There was an error in startup.mjs running again number $j"
     j=$((j+1))
     sleep 60
-    node startup.mjs f5xcemeaworkshop
+    node startup.mjs xcspeccore
   done
 fi

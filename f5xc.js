@@ -153,6 +153,47 @@ class F5xc {
         });
     }
 
+    async updateUserForSpecCore({ email, nsName }) {
+        const endPoint = '/api/web/custom/namespaces/system/user_roles';
+        const data = {
+            email: email.toLowerCase(),
+            first_name: 'lab',
+            last_name: 'user',
+            name: email.toLowerCase(),
+            idm_type: 'VOLTERRA_MANAGED',
+            namespace: 'system',
+            namespace_roles: [
+                {
+                    namespace: 'system',
+                    role: 'spec-workshop-role'
+                },
+                {
+                    namespace: 'shared',
+                    role: 'spec-workshop-role'
+                },
+                {
+                    namespace: nsName,
+                    role: 'ves-io-power-developer-role'
+                },
+                {
+                    "namespace": "shared",
+                    "role": "f5xc-multi-cloud-network-connect-monitor"
+                },
+                {
+                    "namespace": "system",
+                    "role": "f5xc-multi-cloud-network-connect-monitor"
+                }
+            ],
+            type: 'USER'
+        };
+
+        await this.axios.put(endPoint, data, {
+            'axios-retry': {
+                retries: 0
+            }
+        });
+    }
+
     async updateUserForApiSec({ email, nsName }) {
         const endPoint = '/api/web/custom/namespaces/system/user_roles';
         const data = {

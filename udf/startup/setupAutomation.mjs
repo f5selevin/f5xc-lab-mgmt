@@ -112,14 +112,39 @@ class setupAutomation {
     return undefined;
   }
 
+  findPrivateIpv4(value) {
+    const stack = [value];
+    const seen = new Set();
+
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current || typeof current !== 'object' || seen.has(current)) continue;
+      seen.add(current);
+
+      for (const item of Object.values(current)) {
+        if (typeof item === 'string') {
+          const match = item.match(/\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b/);
+          if (match) return match[0];
+        } else if (item && typeof item === 'object') {
+          stack.push(item);
+        }
+      }
+    }
+
+    return undefined;
+  }
+
   async getUdfMetadata() {
     let state = 3, error, output;
     try {
-      const metaCloudAccounts = (await axios.get('http://metadata.udf/cloudAccounts')).data;
-      if (metaCloudAccounts) {
-        this.db.data.udfMetadata.awsAccountId = metaCloudAccounts.cloudAccounts[0].accountId;
-        this.db.data.udfMetadata.awsApiKey = metaCloudAccounts.cloudAccounts[0].apiKey;
-        this.db.data.udfMetadata.awsApiSecret = metaCloudAccounts.cloudAccounts[0].apiSecret;
+      let metaCloudAccounts;
+      if (this.courseId !== 'xcspeccore') {
+        metaCloudAccounts = (await axios.get('http://metadata.udf/cloudAccounts')).data;
+        if (metaCloudAccounts?.cloudAccounts?.[0]) {
+          this.db.data.udfMetadata.awsAccountId = metaCloudAccounts.cloudAccounts[0].accountId;
+          this.db.data.udfMetadata.awsApiKey = metaCloudAccounts.cloudAccounts[0].apiKey;
+          this.db.data.udfMetadata.awsApiSecret = metaCloudAccounts.cloudAccounts[0].apiSecret;
+        }
       }
 
       const metaDeployment = (await axios.get('http://metadata.udf/deployment')).data;
@@ -131,6 +156,13 @@ class setupAutomation {
       this.db.data.udfMetadata.labid = labId || '';
 
       switch (this.courseId) {
+        case 'xcspeccore': {
+          const ceComponent = _.find(metaDeployment.deployment.components, { name: 'F5XC CE RH (On Prem)' });
+          if (!ceComponent) throw new Error('UDF component "F5XC CE RH (On Prem)" was not found');
+          this.db.data.udfMetadata.ceManagementAddress = this.findPrivateIpv4(ceComponent) || '10.1.1.5';
+          break;
+        }
+
         case 'f5xcemeaworkshop':
         case 'f5xcemeak8sworkshop':
           this.db.data.udfMetadata.hostArcadia = _.find(_.find(metaDeployment.deployment.components, { name: 'MicroK8s' }).accessMethods.https, { label: 'Arcadia OnPrem' }).host;
@@ -316,19 +348,21 @@ class setupAutomation {
   async registerOnPremCe() {
     let state = 3, error, output;
     try {
-      const ip = '10.1.1.5:65500';
       const createdUserData = this.db.data.functions.f5xcCreateUserEnv.output;
+      const isSpecCore = this.courseId === 'xcspeccore';
+      const address = isSpecCore ? this.db.data.udfMetadata.ceManagementAddress : '10.1.1.5';
+      const ip = `${address}:65500`;
 
       const onPremCePostData = {
-        token: '771e948b-f6ef-4338-9b50-953762f7a2a7',
-        cluster_name: createdUserData.createdNames.ceOnPrem.clusterName,
+        token: isSpecCore ? createdUserData.smsv2Site.token : '771e948b-f6ef-4338-9b50-953762f7a2a7',
+        cluster_name: isSpecCore ? createdUserData.smsv2Site.siteName : createdUserData.createdNames.ceOnPrem.clusterName,
         hostname: createdUserData.createdNames.ceOnPrem.hostname,
         latitude: '32.06440042393975',
         longitude: '34.894059728328465',
         certified_hardware: 'kvm-voltmesh',
         primary_outside_nic: 'eth0'
       }
-      const onPremCeRegData = (await axios.post(`https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`, onPremCePostData, {
+      output = (await axios.post(`https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`, onPremCePostData, {
         headers: {
           Authorization: 'Basic YWRtaW46Vm9sdGVycmExMjM='
         }

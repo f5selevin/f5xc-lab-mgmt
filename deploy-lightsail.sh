@@ -19,6 +19,7 @@ set +a
 : "${LOCAL_IMAGE:?LOCAL_IMAGE must be set in $ENV_FILE}"
 : "${F5XC_URL:?F5XC_URL must be set in $ENV_FILE}"
 : "${F5XC_KEY:?F5XC_KEY must be set in $ENV_FILE}"
+: "${F5XC_CREDENTIALS_BASE64:?F5XC_CREDENTIALS_BASE64 must be set in $ENV_FILE}"
 : "${DB_HOST:?DB_HOST must be set in $ENV_FILE}"
 : "${DB_PORT:?DB_PORT must be set in $ENV_FILE}"
 : "${DB_NAME:?DB_NAME must be set in $ENV_FILE}"
@@ -28,6 +29,38 @@ set +a
 PGSSLMODE="${PGSSLMODE:-require}"
 NODE_ENV="${NODE_ENV:-production}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
+
+export F5XC_DOMAIN="${F5XC_URL#https://}"
+F5XC_DOMAIN="${F5XC_DOMAIN%/}"
+export F5XC_DOMAIN
+
+node -e '
+  const encoded = process.env.F5XC_CREDENTIALS_BASE64;
+  let credentials;
+  try {
+    credentials = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+  } catch {
+    console.error("F5XC_CREDENTIALS_BASE64 must be base64-encoded valid JSON");
+    process.exit(1);
+  }
+
+  const credential = credentials.xcspeccore;
+  if (!credential) {
+    console.error("F5XC_CREDENTIALS_BASE64 must contain xcspeccore");
+    process.exit(1);
+  }
+
+  const key = typeof credential === "string"
+    ? credential
+    : credential.key || credential.apiKey || credential.apikey;
+  const domain = typeof credential === "string"
+    ? process.env.F5XC_DOMAIN
+    : credential.domain || credential.address || process.env.F5XC_DOMAIN;
+  if (!key || !domain) {
+    console.error("The xcspeccore credential requires both an XC domain and API key");
+    process.exit(1);
+  }
+'
 
 if ! docker context inspect "$DOCKER_CONTEXT" >/dev/null 2>&1; then
   print -u2 "Docker context does not exist: $DOCKER_CONTEXT"
@@ -51,7 +84,7 @@ CONTAINERS_FILE="$(mktemp)"
 PUBLIC_ENDPOINT_FILE="$(mktemp)"
 cleanup() {
   rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE"
-  unset DB_PASSWORD DATABASE_URL F5XC_KEY
+  unset DB_PASSWORD DATABASE_URL F5XC_KEY F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN
 }
 trap cleanup EXIT
 
@@ -104,8 +137,9 @@ jq -n \
   --arg name "$CONTAINER_NAME" \
   --arg image "$LIGHTSAIL_IMAGE" \
   --arg databaseUrl "$DATABASE_URL" \
-  --arg f5xcHost "${F5XC_URL#https://}" \
+  --arg f5xcHost "$F5XC_DOMAIN" \
   --arg f5xcKey "$F5XC_KEY" \
+  --arg f5xcCredentialsBase64 "$F5XC_CREDENTIALS_BASE64" \
   --arg pgSslMode "$PGSSLMODE" \
   --arg nodeEnvironment "$NODE_ENV" \
   '{
@@ -114,6 +148,8 @@ jq -n \
       command: ["node", "index.js", $f5xcHost, $f5xcKey],
       environment: {
         DATABASE_URL: $databaseUrl,
+        F5XC_DOMAIN: $f5xcHost,
+        F5XC_CREDENTIALS_BASE64: $f5xcCredentialsBase64,
         PGSSLMODE: $pgSslMode,
         NODE_ENV: $nodeEnvironment
       },

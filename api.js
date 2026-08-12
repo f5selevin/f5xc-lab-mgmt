@@ -23,10 +23,41 @@ import Xcapiworkshop from './xcapiworkshop.js';
 import Xcaisecurity from './xcaisecurity.js';
 import Xcaigwworkshop from './xcaigwworkshop.js';
 import Apisecurityshiftleft from './apisecurityshiftleft.js'
+import Xcspeccore from './xcspeccore.js';
 
 
 
-let f5xcemeaworkshop, f5xcemeak8sworkshop, f5xcemeamcnworkshop, f5xcemeaapiworkshop, f5xcemeaaiworkshop, f5xcemeaaigwworkshop, apisecurityshiftleft;
+let f5xcemeaworkshop, f5xcemeak8sworkshop, f5xcemeamcnworkshop, f5xcemeaapiworkshop, f5xcemeaaiworkshop, f5xcemeaaigwworkshop, apisecurityshiftleft, xcspeccore;
+
+const normalizeDomain = (domain) => domain?.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+const loadWorkshopCredential = (courseId) => {
+  const encodedCredentials = process.env.F5XC_CREDENTIALS_BASE64;
+  if (!encodedCredentials) return undefined;
+
+  let credentials;
+  try {
+    credentials = JSON.parse(Buffer.from(encodedCredentials, 'base64').toString('utf8'));
+  } catch (error) {
+    throw new Error('F5XC_CREDENTIALS_BASE64 must be base64-encoded valid JSON', { cause: error });
+  }
+
+  const credential = credentials[courseId];
+  if (!credential) return undefined;
+
+  const result = typeof credential === 'string'
+    ? { domain: normalizeDomain(process.env.F5XC_DOMAIN), key: credential }
+    : {
+      domain: normalizeDomain(credential.domain || credential.address || process.env.F5XC_DOMAIN),
+      key: credential.key || credential.apiKey || credential.apikey
+    };
+
+  if (!result.domain || !result.key) {
+    throw new Error(`F5XC credential for ${courseId} requires both an XC domain and API key`);
+  }
+
+  return result;
+};
 
 const args = process.argv.slice(2);
 if (args[0]) {
@@ -40,6 +71,13 @@ if (args[0]) {
 
 }
 
+const specCoreCredential = loadWorkshopCredential('xcspeccore');
+if (specCoreCredential) {
+  xcspeccore = new Xcspeccore({ ...specCoreCredential, courseId: 'xcspeccore' });
+} else if (process.env.NODE_ENV === 'production') {
+  throw new Error('F5XC_CREDENTIALS_BASE64 must contain an xcspeccore credential in production');
+}
+
 fastify.route({
   method: 'GET',
   url: '/',
@@ -50,8 +88,8 @@ fastify.route({
   method: 'POST',
   url: '/v1/student',
   handler: async (request, reply) => {
-    if (f5xcemeaworkshop) {
-      request.log.info(request.body);
+    if (f5xcemeaworkshop || xcspeccore) {
+      request.log.info({ courseId: request.body.courseId, email: request.body.email });
       let { courseId, email } = request.body;
 
       if (email.toLowerCase() == 's.boiangiu@f5.com') email = 'sorinboia@gmail.com';
@@ -63,6 +101,13 @@ fastify.route({
       switch (courseId) {
         case 'f5xcemeaworkshop':
           result = await f5xcemeaworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
+          break;
+        case 'xcspeccore':
+          if (!xcspeccore) {
+            result = { success: 'fail', msg: 'No available credentials for xcspeccore' };
+            break;
+          }
+          result = await xcspeccore.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
           break;
         case 'apisecurityshiftleft':
           result = await apisecurityshiftleft.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
@@ -104,11 +149,18 @@ fastify.route({
 
 
     request.log.info(`Getting student data for ${email} courseId ${courseId}`);
-    if (f5xcemeaworkshop) {
+    if (f5xcemeaworkshop || xcspeccore) {
       let result;
       switch (courseId) {
         case 'f5xcemeaworkshop':
           result = await f5xcemeaworkshop.getStudentDetails({ email });
+          break;
+        case 'xcspeccore':
+          if (!xcspeccore) {
+            result = { success: 'fail', msg: 'No available credentials for xcspeccore' };
+            break;
+          }
+          result = await xcspeccore.getStudentDetails({ email });
           break;
         case 'apisecurityshiftleft':
           result = await apisecurityshiftleft.getStudentDetails({ email });
@@ -164,6 +216,7 @@ fastify.route({
     f5xcemeaaiworkshop = new Xcaisecurity({ ...request.body, courseId: 'f5xcemeaaiworkshop' });
     f5xcemeaaigwworkshop = new Xcaigwworkshop({ ...request.body, courseId: 'f5xcemeaaigwworkshop' });
     apisecurityshiftleft = new Apisecurityshiftleft({ ...request.body, courseId: 'apisecurityshiftleft' });
+    xcspeccore = new Xcspeccore({ ...request.body, courseId: 'xcspeccore' });
   }
 });
 
