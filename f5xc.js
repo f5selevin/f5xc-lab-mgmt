@@ -16,6 +16,37 @@ class F5xc {
             }
         });
 
+        this.axios.interceptors.request.use((config) => {
+            console.info('Calling F5XC API', {
+                domain,
+                url: new URL(config.url, config.baseURL).toString(),
+                passwordPrefix: String(key).slice(0, 5)
+            });
+            return config;
+        });
+
+        this.axios.interceptors.response.use(
+            (response) => {
+                console.info('F5XC API response', {
+                    url: new URL(response.config.url, response.config.baseURL).toString(),
+                    status: response.status,
+                    data: response.data
+                });
+                return response;
+            },
+            (error) => {
+                console.warn('F5XC API error response', {
+                    url: error.config
+                        ? new URL(error.config.url, error.config.baseURL).toString()
+                        : undefined,
+                    status: error.response?.status,
+                    data: error.response?.data,
+                    message: error.message
+                });
+                return Promise.reject(error);
+            }
+        );
+
         axiosRetry(this.axios, {
             retries: 5,
             retryDelay: (retryCount) => {

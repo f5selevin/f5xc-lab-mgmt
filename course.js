@@ -98,41 +98,30 @@ class Course {
 
 
         if (studentValidity) {
+            for (let attempt = 1; attempt <= 10 && !namespace; attempt++) {
+                await new Promise((resolve) => setTimeout(resolve, 5000));
 
-            await (new Promise(async (resolve, reject) => {
-                let userCheckRep = 0;
-                const userCheck = setInterval(async () => {
-                    userCheckRep++;
-                    if (userCheckRep <= 10) {
-                        console.log(userCheckRep);;
-                        const users = await this.f5xc.getUsersNs();
+                try {
+                    const users = await this.f5xc.getUsersNs();
+                    const user = users.items.find(
+                        (item) => item.email?.toLowerCase() === lowerEmail
+                    );
+                    namespace = user?.namespace_roles?.[0]?.namespace;
+                } catch (error) {
+                    log.warn({ operation: 'getUsersNs', error });
+                }
+            }
 
-                        users.items.forEach(element => {
-                            if (element.email == email) {
-                                element.namespace_roles.forEach((item) => {
-                                    if (item.role == 'ves-io-power-developer-role') {
-                                        namespace = item.namespace;
-                                        clearInterval(userCheck);
-                                        createdNames.namespace = namespace;
-                                        resolve();
+            if (!namespace) {
+                const error = `Could not find user ${email} with a namespace`;
+                log.warn({ operation: 'getUsersNs', error });
+                return { status: 'error', operation: 'getUsersNs', error };
+            }
 
-                                    }
-                                })
-                            }
-                        });
-
-
-                    } else {
-                        log.warn({ operation: 'getUsersNs', error: `Could not find user ${email}` });
-                        err = { operation: 'getUsersNs', error: `Could not find user ${email}` };
-
-                        clearInterval(userCheck);
-                        reject();
-                    }
-                }, 5000);
-            }));
-
-            return { hash, namespace, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site }
+            createdNames.namespace = namespace;
+            smsv2Site.siteName = `smsv2-${namespace}`;
+            smsv2Site.tokenName = `smsv2-token-${namespace}`;
+            return { hash, namespace, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site };
 
         } else {
             log.warn('Student creation failed');

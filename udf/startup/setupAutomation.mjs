@@ -314,6 +314,8 @@ class setupAutomation {
     try {
       const udfMetadata = this.db.data.udfMetadata;
 
+      logger.info({ email: udfMetadata.email }, 'Searching for F5XC user name');
+
       let dataToPost = {
         courseId: this.courseId,
         ...udfMetadata
@@ -331,6 +333,12 @@ class setupAutomation {
       }
 
       output = (await axios.post(`${this.f5xcLabMgmtDomain}/v1/student`, dataToPost)).data;
+
+      logger.info({
+        email: udfMetadata.email,
+        namespace: output.createdNames?.namespace
+      }, 'F5XC user name found');
+
       if (output.code == 6) {
         state = 2;
       } else {
@@ -362,6 +370,14 @@ class setupAutomation {
         certified_hardware: 'kvm-voltmesh',
         primary_outside_nic: 'eth0'
       }
+
+      logger.info({ address: ip }, 'CE address found');
+      logger.info({
+        clusterName: onPremCePostData.cluster_name,
+        hostname: onPremCePostData.hostname
+      }, 'CE configuration requested');
+      logger.info({ token: onPremCePostData.token }, 'CE registration token provided');
+
       output = (await axios.post(`https://${ip}/api/ves.io.vpm/introspect/write/ves.io.vpm.config/update`, onPremCePostData, {
         headers: {
           Authorization: 'Basic YWRtaW46Vm9sdGVycmExMjM='
