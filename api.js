@@ -120,7 +120,12 @@ fastify.route({
     const deployment = await findDeployment({ deploymentId: resolvedDeploymentId, namespace });
     if (!deployment) return reply.code(404).send({ status: 'error', message: 'Deployment was not found' });
 
-    const isUdf = await validateUdfRequest({ udfHost: deployment.payload.udfHost, ip: request.ip }).catch((error) => {
+    const isUdf = await validateUdfRequest({
+      udfHost: deployment.payload.udfHost,
+      ip: request.ip,
+      log: request.log,
+      allowIpMismatch: true
+    }).catch((error) => {
       request.log.warn({ operation: 'validateUdfRequest', error });
       return false;
     });
