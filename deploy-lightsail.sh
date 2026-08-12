@@ -28,6 +28,7 @@ set +a
 
 PGSSLMODE="${PGSSLMODE:-require}"
 NODE_ENV="${NODE_ENV:-production}"
+DASHBOARD_PASSWORD="${DASHBOARD_PASSWORD:-xcspeclabs}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
 
 export F5XC_DOMAIN="${F5XC_URL#https://}"
@@ -84,7 +85,7 @@ CONTAINERS_FILE="$(mktemp)"
 PUBLIC_ENDPOINT_FILE="$(mktemp)"
 cleanup() {
   rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE"
-  unset DB_PASSWORD DATABASE_URL F5XC_KEY F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN
+  unset DB_PASSWORD DATABASE_URL F5XC_KEY F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN DASHBOARD_PASSWORD
 }
 trap cleanup EXIT
 
@@ -142,6 +143,7 @@ jq -n \
   --arg f5xcCredentialsBase64 "$F5XC_CREDENTIALS_BASE64" \
   --arg pgSslMode "$PGSSLMODE" \
   --arg nodeEnvironment "$NODE_ENV" \
+  --arg dashboardPassword "$DASHBOARD_PASSWORD" \
   '{
     ($name): {
       image: $image,
@@ -151,7 +153,8 @@ jq -n \
         F5XC_DOMAIN: $f5xcHost,
         F5XC_CREDENTIALS_BASE64: $f5xcCredentialsBase64,
         PGSSLMODE: $pgSslMode,
-        NODE_ENV: $nodeEnvironment
+        NODE_ENV: $nodeEnvironment,
+        DASHBOARD_PASSWORD: $dashboardPassword
       },
       ports: {
         "8080": "HTTP"
@@ -176,6 +179,22 @@ aws lightsail wait container-service-is-active \
   --region "$AWS_REGION" \
   --service-name "$SERVICE_NAME"
 
+SERVICE_URL="$(
+  aws lightsail get-container-services \
+    --region "$AWS_REGION" \
+    --service-name "$SERVICE_NAME" \
+    --query 'containerServices[0].url' \
+    --output text
+)"
+
+ROOT_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "$SERVICE_URL/")"
+DASHBOARD_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "$SERVICE_URL/dashboard")"
+if [[ "$ROOT_STATUS" != "200" || "$DASHBOARD_STATUS" != "401" ]]; then
+  print -u2 "Deployment route validation failed: / returned $ROOT_STATUS; /dashboard returned $DASHBOARD_STATUS (expected 200 and 401)"
+  exit 1
+fi
+
+print "Deployment route validation passed: / returned 200 and protected /dashboard returned 401"
 aws lightsail get-container-services \
   --region "$AWS_REGION" \
   --service-name "$SERVICE_NAME" \

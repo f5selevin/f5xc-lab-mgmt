@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Fastify service that provisions per-student F5 Distributed Cloud (F5XC/Volterra) tenant resources for hands-on workshops running in F5 UDF (UDF = F5's lab environment). A student's UDF blueprint boots, runs the automation in [udf/startup/](udf/startup/), which calls this service's HTTP API to get F5XC objects created and returns the generated resource names back to the lab.
 
 Two independent Node projects live here:
+
 - Repo root — the lab-management API server (deployed as a container, see [Dockerfile](Dockerfile)).
-- [udf/startup/](udf/startup/) — the agent that runs *inside* each student's UDF lab VM (own `package.json`, own deps, not built by the Dockerfile).
+- [udf/startup/](udf/startup/) — the agent that runs _inside_ each student's UDF lab VM (own `package.json`, own deps, not built by the Dockerfile).
 
 Both are ESM (`"type": "module"`). There is no test suite, no linter, and no build step.
 
@@ -21,7 +22,7 @@ mkdir -p db
 node index.js <f5xc-domain> <f5xc-api-token>   # e.g. node index.js f5-sales-public.console.ves.volterra.io <token>
 ```
 
-Listens on `0.0.0.0:8080`. Credentials may also be supplied at runtime instead of via argv by POSTing to `/v1/f5xcred` — see [examples.txt](examples.txt) for working curl invocations of every endpoint.
+Listens on `0.0.0.0:8080`. Production credentials are supplied at deployment through `F5XC_CREDENTIALS_BASE64`; there is no runtime credential-update endpoint.
 
 `db/` must exist before start: each course opens a synchronous lowdb file at `./db/db-<courseId>.json` relative to the process CWD. The directory is gitignored, so a fresh clone has no `db/` and startup will throw.
 
@@ -52,6 +53,7 @@ Subclasses all follow the same shape: call `super.newStudent(...)`, then a chain
 ### Background loops
 
 Every course runs `setInterval` loops that start in the constructor and never stop:
+
 - `deleteInactiveStudents` (base class, 20s) — HEADs `https://<udfHost>` expecting a 401; after 5 consecutive failures it marks the student `deleting` and calls the subclass's `deleteStudent`. This is the only teardown trigger in normal operation, i.e. resources are reclaimed by detecting the UDF lab going away.
 - `checkF5xcTf` (30s) — polls terraform apply status on the AWS VPC site and re-applies on known-transient error strings (`PendingVerification`, `failed to apply`).
 - `checkCeReg` (30s) — auto-approves pending Customer Edge site registrations.
@@ -70,8 +72,9 @@ The Terraform under [udf/terraform/](udf/terraform/) and [udf/terraform_aigw/](u
 ## Adding a course
 
 A new course touches four places, and missing any one fails silently or at runtime rather than at load:
+
 1. New `Course` subclass file.
-2. [api.js](api.js) — the module-level `let`, the argv-path constructor block, a `case` in the POST `/v1/student` switch, a `case` in the GET `/v1/student/:courseId/:emailb64` switch, and the `/v1/f5xcred` handler.
+2. [api.js](api.js) — the module-level `let`, credential-based constructor block, a `case` in the POST `/v1/student` switch, and a `case` in the GET `/v1/student/:courseId/:emailb64` switch.
 3. [udf/startup/startup.mjs](udf/startup/startup.mjs) — a `case` with the step list.
 4. `setupAutomation` — any new step methods, plus the `getUdfMetadata` switch if the course exposes different UDF components.
 
@@ -80,5 +83,5 @@ A new course touches four places, and missing any one fails silently or at runti
 - `validateStudent` in [course.js](course.js) returns `true || result.address == ip` — the UDF-host-vs-source-IP check is effectively disabled while still performing the DNS lookup (which can still throw).
 - [api.js](api.js) hardcodes a few F5 employee email rewrites to personal addresses; F5XC rejects `@f5.com` accounts for lab users.
 - `DELETE /v1/student` references an undefined `c` and will throw; deletion happens via the inactivity loop instead.
-- The API server holds all credentials in memory only. A restart loses them until argv is re-supplied or `/v1/f5xcred` is re-posted, and every request meanwhile returns `{success:'fail', msg:'No available credentials for F5XC'}`.
+- Production credentials come from `F5XC_CREDENTIALS_BASE64` in the container environment and are loaded when the process starts.
 - [examples.txt](examples.txt), [createAccounts.js](createAccounts.js), and the Terraform files contain real-looking AWS keys, F5XC site tokens, and CE basic-auth credentials from past labs. Treat them as compromised; don't propagate them into new code.

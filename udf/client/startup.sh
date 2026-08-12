@@ -4,9 +4,31 @@ exec 3>&1 4>&2
 trap 'exec 2>&4 1>&3' 0 1 2 3
 exec 1>/home/ubuntu/startup/startup.log 2>&1
 
-if test  -f "/home/ubuntu/startup/deployed"; then
-  echo "Deployment already ran, not doing it again"
-  exit 0
+install_ping_client() {
+  local client_dir="/home/ubuntu/lab/udf/client"
+  local image="f5xc-udf-deployment-client"
+  local container="f5xc-udf-deployment-client"
+
+  if [ ! -d "$client_dir" ]; then
+    echo "Ping client source was not found at $client_dir"
+    return 1
+  fi
+
+  echo "Building and starting the deployment ping client"
+  docker build -t "$image" "$client_dir" || return 1
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  docker run -d \
+    --name "$container" \
+    --restart unless-stopped \
+    --network host \
+    -e API_URL=https://xs.partner-spec.f5demos.com \
+    "$image"
+}
+
+if test -f "/home/ubuntu/startup/deployed"; then
+  echo "Deployment already ran; ensuring the ping client is running"
+  install_ping_client
+  exit $?
 fi
 
 sleep 60
@@ -46,4 +68,6 @@ else
     sleep 60
     node startup.mjs xcspeccore
   done
+
+  install_ping_client
 fi

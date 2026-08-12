@@ -253,22 +253,6 @@ fastify.route({
 });
 
 
-fastify.route({
-  method: 'POST',
-  url: '/v1/f5xcred',
-  handler: async (request, reply) => {
-    request.log.info('Credentials received for F5XC');
-    f5xcemeaworkshop = new Xcworkshop({ ...request.body, courseId: 'f5xcemeaworkshop' });
-    f5xcemeamcnworkshop = new Xcmcnworkshop({ ...request.body, courseId: 'f5xcemeamcnworkshop' });
-    f5xcemeak8sworkshop = new Xck8sworkshop({ ...request.body, courseId: 'f5xcemeak8sworkshop' });
-    f5xcemeaapiworkshop = new Xcapiworkshop({ ...request.body, courseId: 'f5xcemeaapiworkshop' });
-    f5xcemeaaiworkshop = new Xcaisecurity({ ...request.body, courseId: 'f5xcemeaaiworkshop' });
-    f5xcemeaaigwworkshop = new Xcaigwworkshop({ ...request.body, courseId: 'f5xcemeaaigwworkshop' });
-    apisecurityshiftleft = new Apisecurityshiftleft({ ...request.body, courseId: 'apisecurityshiftleft' });
-    xcspeccore = new Xcspeccore({ ...request.body, courseId: 'xcspeccore' });
-  }
-});
-
 const log = fastify.log;
 
 export default fastify;
