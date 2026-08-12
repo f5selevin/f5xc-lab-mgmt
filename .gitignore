@@ -4,3 +4,4 @@
 /udf/node_modules/
 /forme.txt
 !/node_modules/axios-retry/lib/esm/index.js
+credentials.json
