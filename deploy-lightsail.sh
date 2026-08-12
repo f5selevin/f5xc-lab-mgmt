@@ -19,7 +19,7 @@ set +a
 : "${LOCAL_IMAGE:?LOCAL_IMAGE must be set in $ENV_FILE}"
 : "${F5XC_URL:?F5XC_URL must be set in $ENV_FILE}"
 : "${F5XC_KEY:?F5XC_KEY must be set in $ENV_FILE}"
-
+: "${F5XC_CREDENTIALS_BASE64:?F5XC_CREDENTIALS_BASE64 must be set in $ENV_FILE}"
 : "${DB_HOST:?DB_HOST must be set in $ENV_FILE}"
 : "${DB_PORT:?DB_PORT must be set in $ENV_FILE}"
 : "${DB_NAME:?DB_NAME must be set in $ENV_FILE}"
@@ -29,25 +29,6 @@ set +a
 PGSSLMODE="${PGSSLMODE:-require}"
 NODE_ENV="${NODE_ENV:-production}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
-
-# Lightsail replaces the complete container definition on every deployment.
-# If the credential map is not local, preserve it from the active deployment.
-if [[ -z "${F5XC_CREDENTIALS_BASE64:-}" ]]; then
-  F5XC_CREDENTIALS_BASE64="$(
-    aws lightsail get-container-services \
-      --region "$AWS_REGION" \
-      --service-name "$SERVICE_NAME" \
-      --output json |
-      jq -r --arg container "$CONTAINER_NAME" \
-        '.containerServices[0].currentDeployment.containers[$container].environment.F5XC_CREDENTIALS_BASE64 // empty'
-  )"
-fi
-
-if [[ -z "$F5XC_CREDENTIALS_BASE64" ]]; then
-  print -u2 "F5XC_CREDENTIALS_BASE64 is not set locally or in the active Lightsail deployment"
-  exit 1
-fi
-export F5XC_CREDENTIALS_BASE64
 
 export F5XC_DOMAIN="${F5XC_URL#https://}"
 F5XC_DOMAIN="${F5XC_DOMAIN%/}"
