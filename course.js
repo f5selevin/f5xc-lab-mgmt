@@ -77,15 +77,52 @@ class Course {
         let userAvailable = false;
         let hash = generateHash([lowerEmail]);
 
-        const studentValidity = await validateUdfRequest({ udfHost, ip }).catch((e) => log.warn({ operation: 'validateStudent', e })).catch((e) => {
-            log.warn({ operation: 'studentValidity', ...e });
+        log.info({
+            operation: 'newStudent.start',
+            email: lowerEmail,
+            requestedNamespace,
+            udfDeploymentId,
+            udfHost,
+            ip,
+            recreateExisting
         });
 
+        // Preserve the original behavior: DNS must resolve, but source IP mismatch
+        // does not block student creation (`true || result.address == ip`).
+        const studentValidity = await validateUdfRequest({
+            udfHost,
+            ip,
+            log,
+            allowIpMismatch: true
+        }).catch((error) => {
+            log.warn({
+                operation: 'validateUdfRequest',
+                udfHost,
+                ip,
+                error: {
+                    name: error?.name,
+                    code: error?.code,
+                    message: error?.message,
+                    stack: error?.stack
+                }
+            });
+            return false;
+        });
 
+        log.info({ operation: 'newStudent.validationComplete', studentValidity });
 
         if (studentValidity) {
             if (!requestedNamespace || !udfDeploymentId) {
-                return { status: 'error', operation: 'validateMetadata', error: 'namespace and deploymentId are required' };
+                const error = 'namespace and deploymentId are required';
+                log.warn({
+                    operation: 'validateMetadata',
+                    error,
+                    requestedNamespace,
+                    udfDeploymentId,
+                    hasNamespace: Boolean(requestedNamespace),
+                    hasDeploymentId: Boolean(udfDeploymentId)
+                });
+                return { status: 'error', operation: 'validateMetadata', error };
             }
 
             for (let attempt = 1; attempt <= 10 && !userAvailable; attempt++) {
@@ -98,11 +135,32 @@ class Course {
                         (item) => item.namespace === requestedNamespace &&
                             ['ves-io-admin-role', 'ves-io-power-developer-role'].includes(item.role)
                     ) || false;
+                    log.info({
+                        operation: 'getUsersNs',
+                        attempt,
+                        totalUsers: users.items?.length,
+                        userFound: Boolean(user),
+                        userAvailable,
+                        requestedNamespace,
+                        namespaceRoles: user?.namespace_roles?.map(({ namespace, role }) => ({ namespace, role }))
+                    });
                 } catch (error) {
-                    log.warn({ operation: 'getUsersNs', attempt, error });
+                    log.warn({
+                        operation: 'getUsersNs',
+                        attempt,
+                        error: {
+                            name: error?.name,
+                            message: error?.message,
+                            code: error?.code,
+                            status: error?.response?.status,
+                            data: error?.response?.data,
+                            stack: error?.stack
+                        }
+                    });
                 }
 
                 if (!userAvailable && attempt < 10) {
+                    log.info({ operation: 'getUsersNs.retry', attempt, delayMs: 10000 });
                     await new Promise((resolve) => setTimeout(resolve, 10000));
                 }
             }
@@ -115,12 +173,29 @@ class Course {
 
             let recreated = false;
             if (recreateExisting) {
-                const existingEntry = Object.entries(this.db.data.students).find(([, student]) => {
+                const studentsForEmail = Object.entries(this.db.data.students).filter(([, student]) =>
+                    student.email?.toLowerCase() === lowerEmail
+                );
+                const deploymentEntry = studentsForEmail.find(([, student]) => {
                     const studentDeploymentId = student.deploymentId || student.createdNames?.deploymentId;
-                    return student.email?.toLowerCase() === lowerEmail && studentDeploymentId === udfDeploymentId;
+                    return studentDeploymentId === udfDeploymentId;
                 });
+                const legacyEntries = studentsForEmail.filter(([, student]) =>
+                    !(student.deploymentId || student.createdNames?.deploymentId)
+                );
+                const legacyEntry = legacyEntries.length === 1 ? legacyEntries[0] : undefined;
+                const existingEntry = deploymentEntry || legacyEntry;
+
                 recreated = Boolean(existingEntry);
                 hash = existingEntry?.[0] || generateHash([lowerEmail, udfDeploymentId]);
+                log.info({
+                    operation: 'newStudent.existingRecord',
+                    recreated,
+                    matchedBy: deploymentEntry ? 'deploymentId' : legacyEntry ? 'legacyEmail' : undefined,
+                    recordsForEmail: studentsForEmail.length,
+                    legacyRecordsForEmail: legacyEntries.length,
+                    hash
+                });
             }
             this.log[hash] = log;
 
@@ -131,9 +206,18 @@ class Course {
             return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site, recreated };
 
         } else {
-            log.warn('Student creation failed');
+            log.warn({
+                operation: 'newStudent.validationFailed',
+                email: lowerEmail,
+                udfHost,
+                ip,
+                requestedNamespace,
+                udfDeploymentId,
+                msg: 'Student creation failed: UDF validity check failed'
+            });
             return {
                 status: 'error',
+                operation: 'validateUdfRequest',
                 msg: 'Validity failed'
             }
         }

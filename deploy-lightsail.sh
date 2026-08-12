@@ -30,6 +30,13 @@ PGSSLMODE="${PGSSLMODE:-require}"
 NODE_ENV="${NODE_ENV:-production}"
 DASHBOARD_PASSWORD="${DASHBOARD_PASSWORD:-xcspeclabs}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
+DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-900}"
+DEPLOY_POLL_SECONDS="${DEPLOY_POLL_SECONDS:-10}"
+
+if [[ ! "$DEPLOY_TIMEOUT_SECONDS" =~ '^[1-9][0-9]*$' || ! "$DEPLOY_POLL_SECONDS" =~ '^[1-9][0-9]*$' ]]; then
+  print -u2 "DEPLOY_TIMEOUT_SECONDS and DEPLOY_POLL_SECONDS must be positive integers"
+  exit 1
+fi
 
 export F5XC_DOMAIN="${F5XC_URL#https://}"
 F5XC_DOMAIN="${F5XC_DOMAIN%/}"
@@ -83,8 +90,10 @@ fi
 
 CONTAINERS_FILE="$(mktemp)"
 PUBLIC_ENDPOINT_FILE="$(mktemp)"
+DEPLOYMENT_RESPONSE_FILE="$(mktemp)"
+DEPLOYMENT_STATUS_FILE="$(mktemp)"
 cleanup() {
-  rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE"
+  rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE" "$DEPLOYMENT_RESPONSE_FILE" "$DEPLOYMENT_STATUS_FILE"
   unset DB_PASSWORD DATABASE_URL F5XC_KEY F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN DASHBOARD_PASSWORD
 }
 trap cleanup EXIT
@@ -173,11 +182,59 @@ aws lightsail create-container-service-deployment \
   --region "$AWS_REGION" \
   --service-name "$SERVICE_NAME" \
   --containers "file://$CONTAINERS_FILE" \
-  --public-endpoint "file://$PUBLIC_ENDPOINT_FILE"
+  --public-endpoint "file://$PUBLIC_ENDPOINT_FILE" \
+  > "$DEPLOYMENT_RESPONSE_FILE"
 
-aws lightsail wait container-service-is-active \
-  --region "$AWS_REGION" \
-  --service-name "$SERVICE_NAME"
+# Some AWS CLI distributions do not provide the Lightsail `wait` operation.
+# Track the exact deployment returned by the create call instead.
+TARGET_DEPLOYMENT_VERSION="$(
+  jq -r --arg image "$LIGHTSAIL_IMAGE" '
+    [.containerService.nextDeployment, .containerService.currentDeployment]
+    | map(select(. != null and ([.containers[]?.image] | index($image) != null)))
+    | .[0].version // empty
+  ' "$DEPLOYMENT_RESPONSE_FILE"
+)"
+
+if [[ -z "$TARGET_DEPLOYMENT_VERSION" ]]; then
+  print -u2 "Could not determine the newly created deployment version"
+  cat "$DEPLOYMENT_RESPONSE_FILE" >&2
+  exit 1
+fi
+
+print "Waiting for Lightsail deployment $TARGET_DEPLOYMENT_VERSION to become ACTIVE..."
+DEPLOY_DEADLINE=$((SECONDS + DEPLOY_TIMEOUT_SECONDS))
+while (( SECONDS < DEPLOY_DEADLINE )); do
+  aws lightsail get-container-service-deployments \
+    --region "$AWS_REGION" \
+    --service-name "$SERVICE_NAME" \
+    > "$DEPLOYMENT_STATUS_FILE"
+
+  DEPLOYMENT_STATE="$(
+    jq -r --arg version "$TARGET_DEPLOYMENT_VERSION" '
+      [.deployments[]? | select((.version | tostring) == $version)][0].state // "PENDING_VISIBILITY"
+    ' "$DEPLOYMENT_STATUS_FILE"
+  )"
+
+  case "$DEPLOYMENT_STATE" in
+    ACTIVE)
+      print "Lightsail deployment $TARGET_DEPLOYMENT_VERSION is ACTIVE"
+      break
+      ;;
+    FAILED|INACTIVE)
+      print -u2 "Lightsail deployment $TARGET_DEPLOYMENT_VERSION entered state $DEPLOYMENT_STATE"
+      exit 1
+      ;;
+    *)
+      print "Deployment state: $DEPLOYMENT_STATE"
+      sleep "$DEPLOY_POLL_SECONDS"
+      ;;
+  esac
+done
+
+if [[ "$DEPLOYMENT_STATE" != "ACTIVE" ]]; then
+  print -u2 "Timed out after ${DEPLOY_TIMEOUT_SECONDS}s waiting for deployment $TARGET_DEPLOYMENT_VERSION (last state: $DEPLOYMENT_STATE)"
+  exit 1
+fi
 
 SERVICE_URL="$(
   aws lightsail get-container-services \
