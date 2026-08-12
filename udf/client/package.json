@@ -1,0 +1,12 @@
+{
+  "name": "f5xc-udf-deployment-client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node client.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

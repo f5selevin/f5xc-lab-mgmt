@@ -5,8 +5,8 @@ class Xcspeccore extends Course {
         super({ domain, key, courseId });
     }
 
-    async newStudent({ email, udfHost, ip, region, log }) {
-        const initialized = await super.newStudent({ email, udfHost, ip, region, log });
+    async newStudent({ email, namespace: requestedNamespace, deploymentId, udfHost, ip, region, log }) {
+        const initialized = await super.newStudent({ email, namespace: requestedNamespace, deploymentId, udfHost, ip, region, log });
         if (initialized.status === 'error') return initialized;
 
         const { hash, makeId, ceOnPrem, createdNames, smsv2Site, namespace } = initialized;

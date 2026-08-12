@@ -134,6 +134,23 @@ class setupAutomation {
     return undefined;
   }
 
+  async getLocalMetadata() {
+    let lastError;
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      try {
+        const metadata = (await axios.get('http://localhost:5123/metadata', { timeout: 5000 })).data;
+        if (metadata?.dep_id && metadata?.email && metadata?.petname) return metadata;
+        lastError = new Error('Local metadata is missing dep_id, email, or petname');
+      } catch (error) {
+        lastError = error;
+      }
+
+      logger.warn({ attempt, error: lastError.message }, 'Local UDF metadata is not ready');
+      if (attempt < 10) await delay(10000);
+    }
+    throw lastError;
+  }
+
   async getUdfMetadata() {
     let state = 3, error, output;
     try {
@@ -147,13 +164,13 @@ class setupAutomation {
         }
       }
 
+      const localMetadata = await this.getLocalMetadata();
       const metaDeployment = (await axios.get('http://metadata.udf/deployment')).data;
-      const labId = this.extractLabId(metaDeployment);
-      this.db.data.udfMetadata.email = metaDeployment.deployment.deployer;
+      this.db.data.udfMetadata.email = localMetadata.email;
+      this.db.data.udfMetadata.namespace = localMetadata.petname;
+      this.db.data.udfMetadata.deploymentId = localMetadata.dep_id;
       this.db.data.udfMetadata.udfHost = metaDeployment.deployment.host;
       this.db.data.udfMetadata.region = metaDeployment.deployment.region;
-      this.db.data.udfMetadata.labId = labId || '';
-      this.db.data.udfMetadata.labid = labId || '';
 
       switch (this.courseId) {
         case 'xcspeccore': {
@@ -180,7 +197,7 @@ class setupAutomation {
 
       }
 
-      output = { metaCloudAccounts, metaDeployment }
+      output = { metaCloudAccounts, metaDeployment, localMetadata }
       state = 1;
       this.db.write();
     } catch (e) {
@@ -339,8 +356,9 @@ class setupAutomation {
         namespace: output.createdNames?.namespace
       }, 'F5XC user name found');
 
-      if (output.code == 6) {
+      if (output.code == 6 || output.status === 'error') {
         state = 2;
+        error = output;
       } else {
         state = 1;
       }

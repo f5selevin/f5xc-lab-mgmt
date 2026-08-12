@@ -24,6 +24,9 @@ import Xcaisecurity from './xcaisecurity.js';
 import Xcaigwworkshop from './xcaigwworkshop.js';
 import Apisecurityshiftleft from './apisecurityshiftleft.js'
 import Xcspeccore from './xcspeccore.js';
+import { findDeployment, getDashboardStudents, updateDeploymentLastSeen } from './database.js';
+import { validateUdfRequest } from './udf-validation.js';
+import { renderDashboard, requireDashboardPassword } from './dashboard.js';
 
 
 
@@ -82,6 +85,52 @@ fastify.route({
   method: 'GET',
   url: '/',
   handler: (_request, reply) => reply.code(200).send({ status: 'OK' }),
+});
+
+fastify.route({
+  method: 'GET',
+  url: '/health',
+  handler: (_request, reply) => reply.code(200).send({ status: 'OK' }),
+});
+
+fastify.route({
+  method: 'GET',
+  url: '/dashboard',
+  preHandler: requireDashboardPassword,
+  handler: async (_request, reply) => {
+    const students = await getDashboardStudents();
+    return reply
+      .header('Cache-Control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(renderDashboard(students));
+  },
+});
+
+fastify.route({
+  method: 'POST',
+  url: '/deployment/ping',
+  handler: async (request, reply) => {
+    const { deploymentId, dep_id: depId, namespace } = request.body || {};
+    const resolvedDeploymentId = deploymentId || depId;
+
+    if (!resolvedDeploymentId || !namespace) {
+      return reply.code(400).send({ status: 'error', message: 'deploymentId and namespace are required' });
+    }
+
+    const deployment = await findDeployment({ deploymentId: resolvedDeploymentId, namespace });
+    if (!deployment) return reply.code(404).send({ status: 'error', message: 'Deployment was not found' });
+
+    const isUdf = await validateUdfRequest({ udfHost: deployment.payload.udfHost, ip: request.ip }).catch((error) => {
+      request.log.warn({ operation: 'validateUdfRequest', error });
+      return false;
+    });
+    if (!isUdf) return reply.code(403).send({ status: 'error', message: 'Request did not originate from UDF' });
+
+    const lastSeen = new Date();
+    await updateDeploymentLastSeen({ deploymentId: resolvedDeploymentId, namespace, lastSeen });
+
+    return { status: 'ok', lastSeen: lastSeen.toISOString() };
+  },
 });
 
 fastify.route({

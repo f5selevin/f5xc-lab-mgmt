@@ -1,24 +1,10 @@
 import { createStudentRepository } from './database.js';
 import F5xc from './f5xc.js';
-import dns from 'node:dns';
 import axios from 'axios';
 import https from 'https';
 import { log as fastifyLog } from './api.js'
 import crypto from 'crypto';
-
-
-
-
-const validateStudent = async ({ udfHost, ip }) => {
-    let success;
-    const options = {
-        family: 4,
-        hints: dns.ADDRCONFIG | dns.V4MAPPED,
-    };
-    const result = await dns.promises.lookup(udfHost, options);
-
-    return true || result.address == ip;
-}
+import { validateUdfRequest } from './udf-validation.js';
 
 const generateHash = (arr) => {
     let hash = crypto.createHash('md5');
@@ -83,48 +69,56 @@ class Course {
         return { ...createdNames, hostArcadia, ceArcadia, ollama };
     }
 
-    async newStudent({ email, hostArcadia, ceArcadia, udfHost, ip, region, awsAccountId, awsApiKey, awsApiSecret, awsRegion, awsAz, vpcId, subnetId, log }) {
+    async newStudent({ email, namespace: requestedNamespace, deploymentId, dep_id: depId, hostArcadia, ceArcadia, udfHost, ip, region, awsAccountId, awsApiKey, awsApiSecret, awsRegion, awsAz, vpcId, subnetId, log }) {
         await this.ready;
         const createdNames = createNames(email);
         const { lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, smsv2Site } = createdNames;
-        let namespace;
+        const udfDeploymentId = deploymentId || depId;
+        let userAvailable = false;
         const hash = generateHash([lowerEmail]);
         this.log[hash] = log;
 
-        const studentValidity = await validateStudent({ udfHost, ip }).catch((e) => log.warn({ operation: 'validateStudent', e })).catch((e) => {
+        const studentValidity = await validateUdfRequest({ udfHost, ip }).catch((e) => log.warn({ operation: 'validateStudent', e })).catch((e) => {
             log.warn({ operation: 'studentValidity', ...e });
         });
 
 
 
         if (studentValidity) {
-            for (let attempt = 1; attempt <= 10 && !namespace; attempt++) {
-                await new Promise((resolve) => setTimeout(resolve, 5000));
+            if (!requestedNamespace || !udfDeploymentId) {
+                return { status: 'error', operation: 'validateMetadata', error: 'namespace and deploymentId are required' };
+            }
 
+            for (let attempt = 1; attempt <= 10 && !userAvailable; attempt++) {
                 try {
                     const users = await this.f5xc.getUsersNs();
                     const user = users.items.find(
                         (item) => item.email?.toLowerCase() === lowerEmail
                     );
-                    const namespaceRole = user?.namespace_roles?.find(
-                        (item) => ['ves-io-admin-role', 'ves-io-power-developer-role'].includes(item.role)
-                    );
-                    namespace = namespaceRole?.namespace;
+                    userAvailable = user?.namespace_roles?.some(
+                        (item) => item.namespace === requestedNamespace &&
+                            ['ves-io-admin-role', 'ves-io-power-developer-role'].includes(item.role)
+                    ) || false;
                 } catch (error) {
-                    log.warn({ operation: 'getUsersNs', error });
+                    log.warn({ operation: 'getUsersNs', attempt, error });
+                }
+
+                if (!userAvailable && attempt < 10) {
+                    await new Promise((resolve) => setTimeout(resolve, 10000));
                 }
             }
 
-            if (!namespace) {
-                const error = `Could not find user ${email} with an admin or power-developer namespace role`;
+            if (!userAvailable) {
+                const error = `Could not find user ${email} with an admin or power-developer role in namespace ${requestedNamespace}`;
                 log.warn({ operation: 'getUsersNs', error });
                 return { status: 'error', operation: 'getUsersNs', error };
             }
 
-            createdNames.namespace = namespace;
-            smsv2Site.siteName = `smsv2-${namespace}`;
-            smsv2Site.tokenName = `smsv2-token-${namespace}`;
-            return { hash, namespace, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site };
+            createdNames.namespace = requestedNamespace;
+            createdNames.deploymentId = udfDeploymentId;
+            smsv2Site.siteName = `smsv2-${requestedNamespace}`;
+            smsv2Site.tokenName = `smsv2-token-${requestedNamespace}`;
+            return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site };
 
         } else {
             log.warn('Student creation failed');

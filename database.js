@@ -66,6 +66,7 @@ export async function initializeDatabase() {
 export function createStudentRepository(courseId) {
     if (!pool) throw new Error('Database is not initialized');
     const state = {
+        courseId,
         data: { students: {} },
         scheduledHashes: new Set(),
         pending: Promise.resolve(),
@@ -83,7 +84,12 @@ export function createStudentRepository(courseId) {
             state.scheduledHashes = new Set(result.rows.map((row) => row.student_hash));
         },
         write() {
-            const entries = Object.entries(state.data.students).map(([hash, payload]) => [hash, JSON.stringify(payload)]);
+            const entries = Object.entries(state.data.students).map(([hash, payload]) => {
+                payload.deploymentId ||= payload.createdNames?.deploymentId;
+                payload.namespace ||= payload.createdNames?.namespace;
+                payload.lastSeen ||= new Date().toISOString();
+                return [hash, JSON.stringify(payload)];
+            });
             const currentHashes = new Set(entries.map(([hash]) => hash));
             const removedHashes = [...state.scheduledHashes].filter((hash) => !currentHashes.has(hash));
             state.scheduledHashes = currentHashes;
@@ -126,6 +132,62 @@ export function createStudentRepository(courseId) {
     };
     repositories.add(state);
     return repository;
+}
+
+export async function getDashboardStudents() {
+    if (!pool) throw new Error('Database is not initialized');
+    const result = await pool.query(
+        `SELECT course_id AS "courseId",
+                student_hash AS "studentHash",
+                payload->>'email' AS email,
+                payload->>'namespace' AS namespace,
+                payload->>'deploymentId' AS "deploymentId",
+                payload->>'state' AS "studentState",
+                payload->>'lastSeen' AS "lastSeen",
+                payload->'cleanup'->>'state' AS "cleanupState",
+                payload->'cleanup'->>'claimedAt' AS "cleanupClaimedAt",
+                payload->'cleanup'->>'cleanedAt' AS "cleanedAt",
+                payload->'cleanup'->>'failedAt' AS "cleanupFailedAt",
+                payload->'cleanup'->>'error' AS "cleanupError",
+                payload->'smsv2Site'->>'siteName' AS "siteName",
+                created_at AS "createdAt",
+                updated_at AS "updatedAt"
+         FROM students
+         ORDER BY COALESCE((payload->>'lastSeen')::timestamptz, created_at) DESC`,
+    );
+    return result.rows;
+}
+
+export async function findDeployment({ deploymentId, namespace }) {
+    if (!pool) throw new Error('Database is not initialized');
+    const result = await pool.query(
+        `SELECT course_id, student_hash, payload
+         FROM students
+         WHERE payload->>'deploymentId' = $1 AND payload->>'namespace' = $2
+         LIMIT 1`,
+        [deploymentId, namespace],
+    );
+    return result.rows[0];
+}
+
+export async function updateDeploymentLastSeen({ deploymentId, namespace, lastSeen = new Date() }) {
+    if (!pool) throw new Error('Database is not initialized');
+
+    const timestamp = lastSeen.toISOString();
+    const result = await pool.query(
+        `UPDATE students
+         SET payload = jsonb_set(payload, '{lastSeen}', to_jsonb($3::text), true), updated_at = now()
+         WHERE payload->>'deploymentId' = $1 AND payload->>'namespace' = $2
+         RETURNING course_id, student_hash`,
+        [deploymentId, namespace, timestamp],
+    );
+
+    for (const { course_id: courseId, student_hash: hash } of result.rows) {
+        const state = [...repositories].find((item) => item.courseId === courseId);
+        if (state?.data.students[hash]) state.data.students[hash].lastSeen = timestamp;
+    }
+
+    return result.rowCount;
 }
 
 export async function closeDatabase() {
