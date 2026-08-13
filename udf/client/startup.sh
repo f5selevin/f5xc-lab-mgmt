@@ -61,9 +61,8 @@ if [[ $result == *"template"* ]]; then
   echo "This is only a template"
 else
   echo "Instaling lab"
-  git clone https://github.com/f5selevin/f5xc-lab-mgmt /home/ubuntu/lab
-  git checkout feature/cleanup
-  cd /home/ubuntu/lab/udf/startup
+  git clone https://github.com/f5selevin/f5xc-lab-mgmt /home/ubuntu/lab  
+  cd /home/ubuntu/lab/udf/startup  
   npm install || exit 1
 
   node startup.mjs xcspeccore || exit 1
