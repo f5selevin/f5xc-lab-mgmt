@@ -3,8 +3,6 @@ set -euo pipefail
 
 SERVICE_NAME="f5xc-lab-startup.service"
 SERVICE_USER="${SERVICE_USER:-ubuntu}"
-INSTALL_DIR="/usr/local/lib/f5xc-lab"
-INSTALL_PATH="${INSTALL_DIR}/startup.sh"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_PATH="${SCRIPT_DIR}/startup.sh"
@@ -24,8 +22,6 @@ if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   exit 1
 fi
 
-install -d -m 0755 "${INSTALL_DIR}"
-install -m 0755 "${SOURCE_PATH}" "${INSTALL_PATH}"
 install -d -o "${SERVICE_USER}" -g "$(id -gn "${SERVICE_USER}")" -m 0755 "/home/${SERVICE_USER}/startup"
 
 cat >"${UNIT_PATH}" <<EOF
@@ -39,8 +35,8 @@ Type=oneshot
 User=${SERVICE_USER}
 Group=$(id -gn "${SERVICE_USER}")
 Environment=HOME=/home/${SERVICE_USER}
-WorkingDirectory=/home/${SERVICE_USER}
-ExecStart=/bin/bash ${INSTALL_PATH}
+WorkingDirectory=${SCRIPT_DIR}
+ExecStart=/bin/bash ${SOURCE_PATH}
 TimeoutStartSec=infinity
 RemainAfterExit=yes
 
