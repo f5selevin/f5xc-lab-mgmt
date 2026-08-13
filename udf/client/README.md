@@ -22,5 +22,6 @@ Optional environment variables:
 
 - `PING_INTERVAL_MS`: heartbeat interval; defaults to `60000`.
 - `METADATA_URL`: local metadata endpoint; defaults to `http://localhost:5123/metadata`.
+- `DEPLOYMENT_METADATA_URL`: UDF deployment metadata endpoint; defaults to `http://metadata.udf/deployment`.
 
-The client retries unavailable or incomplete local metadata 10 times with 10 seconds between attempts. It sends `deploymentId`, `email`, and `namespace` to `POST /deployment/ping`. The server validates the caller against the UDF hostname already stored with that deployment.
+The client retries unavailable or incomplete metadata 10 times with 10 seconds between attempts. It sends `deploymentId`, `email`, `namespace`, and the current deployment metadata `host` as `udfHost` to `POST /deployment/ping`. The server validates the submitted UDF hostname rather than the hostname stored when the student was created.

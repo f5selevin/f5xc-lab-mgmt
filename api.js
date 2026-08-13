@@ -88,18 +88,18 @@ fastify.route({
   method: 'POST',
   url: '/deployment/ping',
   handler: async (request, reply) => {
-    const { deploymentId, dep_id: depId, namespace } = request.body || {};
+    const { deploymentId, dep_id: depId, namespace, udfHost } = request.body || {};
     const resolvedDeploymentId = deploymentId || depId;
 
-    if (!resolvedDeploymentId || !namespace) {
-      return reply.code(400).send({ status: 'error', message: 'deploymentId and namespace are required' });
+    if (!resolvedDeploymentId || !namespace || !udfHost) {
+      return reply.code(400).send({ status: 'error', message: 'deploymentId, namespace, and udfHost are required' });
     }
 
     const deployment = await findDeployment({ deploymentId: resolvedDeploymentId, namespace });
     if (!deployment) return reply.code(404).send({ status: 'error', message: 'Deployment was not found' });
 
     const isUdf = await validateUdfRequest({
-      udfHost: deployment.payload.udfHost,
+      udfHost,
       ip: request.ip,
       log: request.log,
       allowIpMismatch: true

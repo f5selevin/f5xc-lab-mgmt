@@ -1,4 +1,5 @@
 const metadataUrl = process.env.METADATA_URL || 'http://localhost:5123/metadata';
+const deploymentMetadataUrl = process.env.DEPLOYMENT_METADATA_URL || 'http://metadata.udf/deployment';
 const apiUrl = process.env.API_URL;
 const intervalMs = Number(process.env.PING_INTERVAL_MS || 60000);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -9,11 +10,21 @@ async function getMetadata() {
   let lastError;
   for (let attempt = 1; attempt <= 10; attempt++) {
     try {
-      const response = await fetch(metadataUrl, { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error(`Metadata returned HTTP ${response.status}`);
-      const metadata = await response.json();
-      if (metadata.dep_id && metadata.email && metadata.petname) return metadata;
-      lastError = new Error('Metadata is missing dep_id, email, or petname');
+      const [localResponse, deploymentResponse] = await Promise.all([
+        fetch(metadataUrl, { signal: AbortSignal.timeout(5000) }),
+        fetch(deploymentMetadataUrl, { signal: AbortSignal.timeout(5000) }),
+      ]);
+      if (!localResponse.ok) throw new Error(`Local metadata returned HTTP ${localResponse.status}`);
+      if (!deploymentResponse.ok) throw new Error(`Deployment metadata returned HTTP ${deploymentResponse.status}`);
+
+      const [metadata, deploymentMetadata] = await Promise.all([
+        localResponse.json(),
+        deploymentResponse.json(),
+      ]);
+      if (metadata.dep_id && metadata.email && metadata.petname && deploymentMetadata?.deployment?.host) {
+        return { ...metadata, udfHost: deploymentMetadata.deployment.host };
+      }
+      lastError = new Error('Metadata is missing dep_id, email, petname, or deployment.host');
     } catch (error) {
       lastError = error;
     }
@@ -33,6 +44,7 @@ async function ping() {
       deploymentId: metadata.dep_id,
       email: metadata.email,
       namespace: metadata.petname,
+      udfHost: metadata.udfHost,
     }),
     signal: AbortSignal.timeout(10000),
   });
