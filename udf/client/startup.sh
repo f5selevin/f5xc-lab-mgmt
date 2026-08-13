@@ -1,5 +1,11 @@
 #!/bin/bash
 
+exec 9>/home/ubuntu/startup/startup.lock
+if ! flock -n 9; then
+  echo "Another startup process is already running; exiting"
+  exit 0
+fi
+
 exec 3>&1 4>&2
 trap 'exec 2>&4 1>&3' 0 1 2 3
 exec 1>/home/ubuntu/startup/startup.log 2>&1
@@ -32,8 +38,6 @@ if test -f "/home/ubuntu/startup/deployed"; then
 fi
 
 sleep 60
-touch /home/ubuntu/startup/deployed
-
 
 export PATH=/home/ubuntu/.nvm/versions/node/v18.16.0/bin/:$PATH
 
@@ -58,16 +62,13 @@ if [[ $result == *"template"* ]]; then
 else
   echo "Instaling lab"
   git clone https://github.com/f5selevin/f5xc-lab-mgmt /home/ubuntu/lab
+  git checkout feature/cleanup
   cd /home/ubuntu/lab/udf/startup
-  npm install && node startup.mjs xcspeccore
-  j=0
-  while [ -f "/home/ubuntu/startup/error" ] && [ "$j" -lt 10 ]
-  do
-    echo "There was an error in startup.mjs running again number $j"
-    j=$((j+1))
-    sleep 60
-    node startup.mjs xcspeccore
-  done
+  npm install || exit 1
 
-  install_ping_client
+  node startup.mjs xcspeccore || exit 1
+  echo "startup.mjs completed successfully"
+  install_ping_client || exit 1
 fi
+
+touch /home/ubuntu/startup/deployed
