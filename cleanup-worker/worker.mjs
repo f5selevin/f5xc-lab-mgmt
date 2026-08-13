@@ -314,12 +314,34 @@ function redirectToDashboard(response) {
 
 const healthServer = createServer((request, response) => {
   const startedAt = Date.now();
-  const requestUrl = new URL(request.url || '/', 'http://localhost');
+  const rawTarget = request.url || '/';
   const requestContext = {
     method: request.method,
-    path: requestUrl.pathname,
+    path: rawTarget,
     remoteAddress: request.socket.remoteAddress,
   };
+  response.once('finish', () => log('info', 'http_request_completed', {
+    ...requestContext,
+    httpStatus: response.statusCode,
+    durationMs: Date.now() - startedAt,
+  }));
+
+  let requestUrl;
+  try {
+    // Lightsail health checks may send "//"; normalize it as an origin-form path
+    // instead of allowing URL to interpret it as a hostname-less network URL.
+    const normalizedTarget = rawTarget.replace(/^\/{2,}/, '/');
+    requestUrl = new URL(normalizedTarget, 'http://localhost');
+    requestContext.path = requestUrl.pathname;
+  } catch (error) {
+    log('warn', 'invalid_http_request_target', {
+      ...requestContext,
+      error: errorDetails(error),
+    });
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end('{"error":"invalid request target"}');
+    return;
+  }
 
   if (requestUrl.pathname.startsWith('/dashboard') && !isDashboardAuthenticated(request)) {
     log('warn', 'dashboard_authentication_failed', requestContext);
@@ -351,12 +373,6 @@ const healthServer = createServer((request, response) => {
     response.writeHead(404, { 'Content-Type': 'application/json' });
     response.end('{"error":"not found"}');
   }
-
-  response.once('finish', () => log('info', 'http_request_completed', {
-    ...requestContext,
-    httpStatus: response.statusCode,
-    durationMs: Date.now() - startedAt,
-  }));
 });
 healthServer.on('error', (error) => log('error', 'health_server_error', { error: errorDetails(error) }));
 healthServer.listen(healthPort, '0.0.0.0', () => log('info', 'health_server_started', { port: healthPort }));
