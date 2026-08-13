@@ -6,6 +6,14 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 if (!apiUrl) throw new Error('API_URL is required');
 
+console.log('Starting deployment ping client', {
+  version: '2',
+  apiUrl,
+  metadataUrl,
+  deploymentMetadataUrl,
+  intervalMs,
+});
+
 async function getMetadata() {
   let lastError;
   for (let attempt = 1; attempt <= 10; attempt++) {
@@ -37,20 +45,38 @@ async function getMetadata() {
 
 async function ping() {
   const metadata = await getMetadata();
-  const response = await fetch(new URL('/deployment/ping', apiUrl), {
+  const url = new URL('/deployment/ping', apiUrl);
+  const payload = {
+    deploymentId: metadata.dep_id,
+    email: metadata.email,
+    namespace: metadata.petname,
+    udfHost: metadata.udfHost,
+  };
+  const missingFields = ['deploymentId', 'namespace', 'udfHost'].filter((field) => !payload[field]);
+  if (missingFields.length) {
+    throw new Error(`Not sending ping because fields are missing: ${missingFields.join(', ')}`);
+  }
+
+  const startedAt = Date.now();
+  console.log('Sending deployment ping', { url: url.toString(), payload });
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      deploymentId: metadata.dep_id,
-      email: metadata.email,
-      namespace: metadata.petname,
-      udfHost: metadata.udfHost,
-    }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10000),
   });
 
   const body = await response.text();
-  if (!response.ok) throw new Error(`Ping returned HTTP ${response.status}: ${body}`);
+  const responseDetails = {
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    body,
+  };
+  if (!response.ok) {
+    console.error('Deployment ping rejected', responseDetails);
+    throw new Error(`Ping returned HTTP ${response.status}: ${body}`);
+  }
+  console.log('Deployment ping accepted', responseDetails);
   console.log(`Deployment ${metadata.dep_id} seen at ${new Date().toISOString()}`);
 }
 

@@ -20,8 +20,8 @@ install_ping_client() {
     return 1
   fi
 
-  echo "Building and starting the deployment ping client"
-  docker build -t "$image" "$client_dir" || return 1
+  echo "Building and starting the deployment ping client from $client_dir"
+  docker build --no-cache --pull -t "$image" "$client_dir" || return 1
   docker rm -f "$container" >/dev/null 2>&1 || true
   docker run -d \
     --name "$container" \
