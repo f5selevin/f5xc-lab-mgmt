@@ -1,4 +1,8 @@
 import Fastify from 'fastify';
+import { findDeployment, getDashboardStudents, updateDeploymentLastSeen } from './database.js';
+import { validateUdfRequest } from './udf-validation.js';
+import { renderDashboard, requireDashboardPassword } from './dashboard.js';
+
 const fastify = Fastify({
   logger: {
     transport: {
@@ -10,27 +14,10 @@ const fastify = Fastify({
       }
     }
   },
-
-
 });
 
-
-
-import Xcworkshop from './xcworkshop.js';
-import Xcmcnworkshop from './xcmcnworkshop.js';
-import Xck8sworkshop from './xck8sworkshop.js';
-import Xcapiworkshop from './xcapiworkshop.js';
-import Xcaisecurity from './xcaisecurity.js';
-import Xcaigwworkshop from './xcaigwworkshop.js';
-import Apisecurityshiftleft from './apisecurityshiftleft.js'
-import Xcspeccore from './xcspeccore.js';
-import { findDeployment, getDashboardStudents, updateDeploymentLastSeen } from './database.js';
-import { validateUdfRequest } from './udf-validation.js';
-import { renderDashboard, requireDashboardPassword } from './dashboard.js';
-
-
-
-let f5xcemeaworkshop, f5xcemeak8sworkshop, f5xcemeamcnworkshop, f5xcemeaapiworkshop, f5xcemeaaiworkshop, f5xcemeaaigwworkshop, apisecurityshiftleft, xcspeccore;
+const supportedCourseIds = ['xcspeccore'];
+const courses = new Map();
 
 const normalizeDomain = (domain) => domain?.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
@@ -62,23 +49,14 @@ const loadWorkshopCredential = (courseId) => {
   return result;
 };
 
-const args = process.argv.slice(2);
-if (args[0]) {
-  f5xcemeaworkshop = new Xcworkshop({ domain: args[0], key: args[1], courseId: 'f5xcemeaworkshop' });
-  f5xcemeamcnworkshop = new Xcmcnworkshop({ domain: args[0], key: args[1], courseId: 'f5xcemeamcnworkshop' });
-  f5xcemeak8sworkshop = new Xck8sworkshop({ domain: args[0], key: args[1], courseId: 'f5xcemeak8sworkshop' });
-  f5xcemeaapiworkshop = new Xcapiworkshop({ domain: args[0], key: args[1], courseId: 'f5xcemeaapiworkshop' });
-  f5xcemeaaiworkshop = new Xcaisecurity({ domain: args[0], key: args[1], courseId: 'f5xcemeaaiworkshop' });
-  f5xcemeaaigwworkshop = new Xcaigwworkshop({ domain: args[0], key: args[1], courseId: 'f5xcemeaaigwworkshop' });
-  apisecurityshiftleft = new Apisecurityshiftleft({ domain: args[0], key: args[1], courseId: 'apisecurityshiftleft' });
-
-}
-
-const specCoreCredential = loadWorkshopCredential('xcspeccore');
-if (specCoreCredential) {
-  xcspeccore = new Xcspeccore({ ...specCoreCredential, courseId: 'xcspeccore' });
-} else if (process.env.NODE_ENV === 'production') {
-  throw new Error('F5XC_CREDENTIALS_BASE64 must contain an xcspeccore credential in production');
+for (const courseId of supportedCourseIds) {
+  const { default: CourseImplementation } = await import(`./${courseId}.js`);
+  const credential = loadWorkshopCredential(courseId);
+  if (credential) {
+    courses.set(courseId, new CourseImplementation({ ...credential, courseId }));
+  } else if (process.env.NODE_ENV === 'production') {
+    throw new Error(`F5XC_CREDENTIALS_BASE64 must contain a ${courseId} credential in production`);
+  }
 }
 
 fastify.route({
@@ -142,123 +120,22 @@ fastify.route({
   method: 'POST',
   url: '/v1/student',
   handler: async (request, reply) => {
-    if (f5xcemeaworkshop || xcspeccore) {
-      request.log.info({ courseId: request.body.courseId, email: request.body.email });
-      let { courseId, email } = request.body;
+    const { courseId: requestedCourseId, email } = request.body || {};
+    request.log.info({ courseId: requestedCourseId, email });
 
-      if (email.toLowerCase() == 's.boiangiu@f5.com') email = 'sorinboia@gmail.com';
-      if (email.toLowerCase() == 'm.dierick@f5.com') email = 'matt262810@gmail.com';
-      if (email.toLowerCase() == 'p.cloup@f5.com') email = 'philippe@pipomolo.com';
-      if (email.toLowerCase() == 'p.zoller@f5.com') email = 'patrick.zoller@gmx.de';
-      if (email.toLowerCase() == 'a.vistola@f5.com') email = 'alfredo@vistola.de';
-      let result;
-      switch (courseId) {
-        case 'f5xcemeaworkshop':
-          result = await f5xcemeaworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'xcspeccore':
-          if (!xcspeccore) {
-            result = { success: 'fail', msg: 'No available credentials for xcspeccore' };
-            break;
-          }
-          result = await xcspeccore.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'apisecurityshiftleft':
-          result = await apisecurityshiftleft.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'f5xcemeamcnworkshop':
-          result = await f5xcemeamcnworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'f5xcemeaapiworkshop':
-          result = await f5xcemeaapiworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'f5xcemeak8sworkshop':
-          result = await f5xcemeak8sworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'f5xcemeaaiworkshop':
-          result = await f5xcemeaaiworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        case 'f5xcemeaaigwworkshop':
-          result = await f5xcemeaaigwworkshop.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
-          break;
-        default:
-          result = { success: 'fail', msg: 'Unknow courseId' }
-      }
-      return result;
-    } else {
-      request.log.info('No available credentials for F5XC');
-      return { success: 'fail', msg: 'No available credentials for F5XC' }
+    if (!supportedCourseIds.includes(requestedCourseId)) {
+      return reply.code(400).send({ status: 'error', msg: 'Unknown courseId' });
+    }
+    const course = courses.get(requestedCourseId);
+    if (!course) {
+      return reply.code(503).send({ status: 'error', msg: `No available credentials for ${requestedCourseId}` });
+    }
+    if (!email) {
+      return reply.code(400).send({ status: 'error', msg: 'email is required' });
     }
 
+    return course.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
   }
 });
-
-fastify.route({
-  method: 'GET',
-  url: '/v1/student/:courseId/:emailb64',
-  handler: async (request, reply) => {
-
-    const email = Buffer.from(request.params.emailb64, 'base64').toString('utf8');
-    const courseId = request.params.courseId;
-
-
-    request.log.info(`Getting student data for ${email} courseId ${courseId}`);
-    if (f5xcemeaworkshop || xcspeccore) {
-      let result;
-      switch (courseId) {
-        case 'f5xcemeaworkshop':
-          result = await f5xcemeaworkshop.getStudentDetails({ email });
-          break;
-        case 'xcspeccore':
-          if (!xcspeccore) {
-            result = { success: 'fail', msg: 'No available credentials for xcspeccore' };
-            break;
-          }
-          result = await xcspeccore.getStudentDetails({ email });
-          break;
-        case 'apisecurityshiftleft':
-          result = await apisecurityshiftleft.getStudentDetails({ email });
-          break;
-        case 'f5xcemeamcnworkshop':
-          result = await f5xcemeamcnworkshop.getStudentDetails({ email });
-          break;
-        case 'f5xcemeaapiworkshop':
-          result = await f5xcemeaapiworkshop.getStudentDetails({ email });
-          break;
-
-        case 'f5xcemeak8sworkshop':
-          result = await f5xcemeak8sworkshop.getStudentDetails({ email });
-          break;
-        case 'f5xcemeaaiworkshop':
-          result = await f5xcemeaaiworkshop.getStudentDetails({ email });
-          break;
-        case 'f5xcemeaaigwworkshop':
-          result = await f5xcemeaaigwworkshop.getStudentDetails({ email });
-          break;
-        default:
-          result = { success: 'fail', msg: 'Unknow courseId' }
-      }
-      return result;
-    } else {
-      request.log.info('No available credentials for F5XC');
-      return { success: 'fail', msg: 'No available credentials for F5XC' }
-    }
-
-  }
-});
-
-fastify.route({
-  method: 'DELETE',
-  url: '/v1/student',
-  handler: async (request, reply) => {
-    request.log.info(request.body);
-    const result = await c.deleteStudent({ ...request.body, log: request.log });
-    return result;
-  }
-});
-
-
-const log = fastify.log;
 
 export default fastify;
-export { log }

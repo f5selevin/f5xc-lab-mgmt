@@ -1,8 +1,5 @@
 import { createStudentRepository } from './database.js';
 import F5xc from './f5xc.js';
-import axios from 'axios';
-import https from 'https';
-import { log as fastifyLog } from './api.js'
 import crypto from 'crypto';
 import { validateUdfRequest } from './udf-validation.js';
 
@@ -28,25 +25,16 @@ const createNames = (email) => {
     const lowerEmail = email.toLowerCase();
     const randomPart = (new Date()).toISOString().split('T')[0].replace(/-/g, '').slice(4) + '-' + makeId;
     const id = randomPart;
-    //const namespace = 'ns-' + id;
-    const ccName = 'cc-' + id;
-    const awsSiteName = 'as-' + id;
     const ceOnPrem = {
-        clusterName: 'ceop-' + id,
         hostname: 'ceophost' + id
-    }
-    const vk8sName = 'vk8s-' + id;
-
-    const kubeconfig = 'kubeconfig-' + id
-
-    const cek8s = 'cek8s' + id;
+    };
 
     const smsv2Site = {
         siteName: "smsv2-" + id,
         tokenName: "smsv2-token-" + id
     }
 
-    return { lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, kubeconfig, cek8s, smsv2Site };
+    return { lowerEmail, ceOnPrem, smsv2Site };
 }
 
 
@@ -57,22 +45,13 @@ class Course {
     constructor({ domain, key, courseId }) {
         this.f5xc = new F5xc(domain, key);
         this.db = createStudentRepository(courseId);
-        this.log = {};
-        this.ready = this.db.read().then(() => this.deleteInactiveStudents());
+        this.ready = this.db.read();
     }
 
-
-    async getStudentDetails({ email }) {
-        await this.ready;
-        const hash = generateHash([email.toLowerCase()]);
-        const { createdNames, hostArcadia, ceArcadia, ollama } = this.db.data.students[hash]
-        return { ...createdNames, hostArcadia, ceArcadia, ollama };
-    }
-
-    async newStudent({ email, namespace: requestedNamespace, deploymentId, dep_id: depId, hostArcadia, ceArcadia, udfHost, ip, region, awsAccountId, awsApiKey, awsApiSecret, awsRegion, awsAz, vpcId, subnetId, log, recreateExisting = false }) {
+    async newStudent({ email, namespace: requestedNamespace, deploymentId, dep_id: depId, udfHost, ip, log, recreateExisting = false }) {
         await this.ready;
         const createdNames = createNames(email);
-        const { lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, smsv2Site } = createdNames;
+        const { lowerEmail, smsv2Site } = createdNames;
         const udfDeploymentId = deploymentId || depId;
         let userAvailable = false;
         let hash = generateHash([lowerEmail]);
@@ -197,13 +176,11 @@ class Course {
                     hash
                 });
             }
-            this.log[hash] = log;
-
             createdNames.namespace = requestedNamespace;
             createdNames.deploymentId = udfDeploymentId;
             smsv2Site.siteName = `smsv2-${requestedNamespace}`;
             smsv2Site.tokenName = `smsv2-token-${requestedNamespace}`;
-            return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, lowerEmail, ccName, awsSiteName, makeId, ceOnPrem, vk8sName, createdNames, smsv2Site, recreated };
+            return { hash, namespace: requestedNamespace, deploymentId: udfDeploymentId, createdNames, smsv2Site, recreated };
 
         } else {
             log.warn({
@@ -222,36 +199,6 @@ class Course {
             }
         }
 
-    }
-
-
-    deleteInactiveStudents() {
-        setInterval((x) => {
-            for (const [hash, student] of Object.entries(this.db.data.students)) {
-                const log = this.log[hash] || fastifyLog;
-                const { udfHost } = student;
-
-                axios.head(`https://${udfHost}`, {
-                    validateStatus: status => status == 401, timeout: 2000, httpsAgent: new https.Agent({
-                        rejectUnauthorized: false
-                    })
-                })
-                    .then(() => {
-                        this.db.data.students[hash].failedChecks = 0;
-                    })
-                    .catch((e) => {
-                        this.db.data.students[hash].failedChecks++;
-                        if (this.db.data.students[hash].failedChecks >= 5 && this.db.data.students[hash].state != 'deleting') {
-                            this.db.data.students[hash].state = 'deleting';
-                            this.deleteStudent({ hash, log }).catch((e) => {
-                                log.warn({ operation: 'deleteInactiveStudents', ...e });
-                            });
-
-
-                        }
-                    });
-            }
-        }, 20000);
     }
 }
 

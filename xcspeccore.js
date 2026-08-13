@@ -32,7 +32,7 @@ class Xcspeccore extends Course {
             return initialized;
         }
 
-        const { hash, makeId, ceOnPrem, createdNames, smsv2Site, namespace, deploymentId: initializedDeploymentId, recreated } = initialized;
+        const { hash, createdNames, smsv2Site, namespace, deploymentId: initializedDeploymentId, recreated } = initialized;
         let err;
 
         log.info({
@@ -104,16 +104,13 @@ class Xcspeccore extends Course {
             smsv2Site,
             email,
             state: 'active',
-            makeId,
             namespace,
             deploymentId: initializedDeploymentId,
             createdNames,
             lastSeen: new Date().toISOString(),
             udfHost,
             ip,
-            region,
-            ceRegistration: { state: 'NONE', ...ceOnPrem },
-            failedChecks: 0
+            region
         };
         log.info({ operation: 'studentDatabase.write.start', hash, email, namespace });
         await this.db.write().then(() => {
