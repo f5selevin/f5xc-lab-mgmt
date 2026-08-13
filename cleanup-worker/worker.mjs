@@ -107,9 +107,14 @@ async function claimStaleStudents(scanId) {
        )
        UPDATE students AS student
        SET payload = jsonb_set(
-             student.payload,
-             '{cleanup}',
-             jsonb_build_object('state', 'processing', 'claimedAt', now()::text),
+             jsonb_set(
+               student.payload,
+               '{cleanup}',
+               jsonb_build_object('state', 'processing', 'claimedAt', now()::text),
+               true
+             ),
+             '{state}',
+             to_jsonb('processing'::text),
              true
            ),
            updated_at = now()
@@ -217,14 +222,19 @@ async function setCleanupResult(row, state, error, context) {
   log('info', 'cleanup_result_update_started', { ...context, state });
   const result = await pool.query(
     `UPDATE students
-     SET payload = CASE
-           WHEN $4::boolean
-             THEN jsonb_set(payload #- '{smsv2Site,token}', '{cleanup}', $3::jsonb, true)
-           ELSE jsonb_set(payload, '{cleanup}', $3::jsonb, true)
-         END,
+     SET payload = jsonb_set(
+           CASE
+             WHEN $4::boolean
+               THEN jsonb_set(payload #- '{smsv2Site,token}', '{cleanup}', $3::jsonb, true)
+             ELSE jsonb_set(payload, '{cleanup}', $3::jsonb, true)
+           END,
+           '{state}',
+           to_jsonb($5::text),
+           true
+         ),
          updated_at = now()
      WHERE course_id = $1 AND student_hash = $2`,
-    [row.course_id, row.student_hash, JSON.stringify(cleanup), state === 'cleaned'],
+    [row.course_id, row.student_hash, JSON.stringify(cleanup), state === 'cleaned', state],
   );
   log('info', 'cleanup_result_update_completed', {
     ...context,
