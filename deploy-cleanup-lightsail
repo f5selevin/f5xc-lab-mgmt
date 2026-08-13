@@ -1,0 +1,217 @@
+#!/bin/zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  print -u2 "Environment file not found: $ENV_FILE"
+  exit 1
+fi
+
+set -a
+source "$ENV_FILE"
+set +a
+
+: "${AWS_REGION:?AWS_REGION must be set in $ENV_FILE}"
+: "${CLEANUP_SERVICE_NAME:?CLEANUP_SERVICE_NAME must be set in $ENV_FILE}"
+: "${DB_HOST:?DB_HOST must be set in $ENV_FILE}"
+: "${DB_PORT:?DB_PORT must be set in $ENV_FILE}"
+: "${DB_NAME:?DB_NAME must be set in $ENV_FILE}"
+: "${DB_USER:?DB_USER must be set in $ENV_FILE}"
+: "${DB_PASSWORD:?DB_PASSWORD must be set in $ENV_FILE}"
+: "${F5XC_URL:?F5XC_URL must be set in $ENV_FILE}"
+: "${F5XC_CREDENTIALS_BASE64:?F5XC_CREDENTIALS_BASE64 must be set in $ENV_FILE}"
+
+CLEANUP_CONTAINER_NAME="${CLEANUP_CONTAINER_NAME:-cleanup-worker}"
+CLEANUP_LOCAL_IMAGE="${CLEANUP_LOCAL_IMAGE:-f5xc-lab-cleanup-worker}"
+CLEANUP_IMAGE_LABEL="${CLEANUP_IMAGE_LABEL:-cleanup}"
+PGSSLMODE="${PGSSLMODE:-require}"
+DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
+DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-900}"
+DEPLOY_POLL_SECONDS="${DEPLOY_POLL_SECONDS:-10}"
+
+if [[ ! "$DEPLOY_TIMEOUT_SECONDS" =~ '^[1-9][0-9]*$' || ! "$DEPLOY_POLL_SECONDS" =~ '^[1-9][0-9]*$' ]]; then
+  print -u2 "DEPLOY_TIMEOUT_SECONDS and DEPLOY_POLL_SECONDS must be positive integers"
+  exit 1
+fi
+
+F5XC_DOMAIN="${F5XC_URL#https://}"
+F5XC_DOMAIN="${F5XC_DOMAIN#http://}"
+F5XC_DOMAIN="${F5XC_DOMAIN%/}"
+export F5XC_DOMAIN
+
+node -e '
+  try {
+    const credentials = JSON.parse(Buffer.from(process.env.F5XC_CREDENTIALS_BASE64, "base64").toString("utf8"));
+    if (!credentials || typeof credentials !== "object" || Array.isArray(credentials)) throw new Error();
+  } catch {
+    console.error("F5XC_CREDENTIALS_BASE64 must be base64-encoded valid JSON containing course credentials");
+    process.exit(1);
+  }
+'
+
+if ! docker context inspect "$DOCKER_CONTEXT" >/dev/null 2>&1; then
+  print -u2 "Docker context does not exist: $DOCKER_CONTEXT"
+  exit 1
+fi
+
+export DOCKER_HOST="$(docker context inspect "$DOCKER_CONTEXT" --format '{{ .Endpoints.docker.Host }}')"
+if [[ -z "$DOCKER_HOST" ]]; then
+  print -u2 "Docker context $DOCKER_CONTEXT has no Docker endpoint"
+  exit 1
+fi
+if ! docker info >/dev/null 2>&1; then
+  print -u2 "Cannot connect to Docker at $DOCKER_HOST"
+  exit 1
+fi
+
+CONTAINERS_FILE="$(mktemp)"
+PUBLIC_ENDPOINT_FILE="$(mktemp)"
+DEPLOYMENT_RESPONSE_FILE="$(mktemp)"
+DEPLOYMENT_STATUS_FILE="$(mktemp)"
+cleanup() {
+  rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE" "$DEPLOYMENT_RESPONSE_FILE" "$DEPLOYMENT_STATUS_FILE"
+  unset DB_PASSWORD DATABASE_URL F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN
+}
+trap cleanup EXIT
+
+export DATABASE_URL="$(
+  node -e '
+    const user = encodeURIComponent(process.env.DB_USER);
+    const password = encodeURIComponent(process.env.DB_PASSWORD);
+    console.log(`postgresql://${user}:${password}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
+  '
+)"
+
+aws lightsail get-container-services \
+  --region "$AWS_REGION" \
+  --service-name "$CLEANUP_SERVICE_NAME" >/dev/null
+
+docker buildx build \
+  --platform linux/amd64 \
+  --load \
+  --tag "$CLEANUP_LOCAL_IMAGE" \
+  "$SCRIPT_DIR/cleanup-worker"
+
+aws lightsail push-container-image \
+  --region "$AWS_REGION" \
+  --service-name "$CLEANUP_SERVICE_NAME" \
+  --label "$CLEANUP_IMAGE_LABEL" \
+  --image "$CLEANUP_LOCAL_IMAGE"
+
+LIGHTSAIL_IMAGE="$(
+  aws lightsail get-container-images \
+    --region "$AWS_REGION" \
+    --service-name "$CLEANUP_SERVICE_NAME" \
+    --query "containerImages[?starts_with(image, ':${CLEANUP_SERVICE_NAME}.${CLEANUP_IMAGE_LABEL}.')]|[0].image" \
+    --output text
+)"
+if [[ -z "$LIGHTSAIL_IMAGE" || "$LIGHTSAIL_IMAGE" == "None" ]]; then
+  print -u2 "Could not find the uploaded Lightsail image for label $CLEANUP_IMAGE_LABEL"
+  exit 1
+fi
+
+jq -n \
+  --arg name "$CLEANUP_CONTAINER_NAME" \
+  --arg image "$LIGHTSAIL_IMAGE" \
+  --arg databaseUrl "$DATABASE_URL" \
+  --arg pgSslMode "$PGSSLMODE" \
+  --arg f5xcDomain "$F5XC_DOMAIN" \
+  --arg f5xcCredentialsBase64 "$F5XC_CREDENTIALS_BASE64" \
+  --arg scanIntervalMs "${SCAN_INTERVAL_MS:-180000}" \
+  --arg staleAfterMs "${STALE_AFTER_MS:-300000}" \
+  --arg claimTimeoutMs "${CLAIM_TIMEOUT_MS:-900000}" \
+  '{
+    ($name): {
+      image: $image,
+      environment: {
+        DATABASE_URL: $databaseUrl,
+        PGSSLMODE: $pgSslMode,
+        F5XC_DOMAIN: $f5xcDomain,
+        F5XC_CREDENTIALS_BASE64: $f5xcCredentialsBase64,
+        SCAN_INTERVAL_MS: $scanIntervalMs,
+        STALE_AFTER_MS: $staleAfterMs,
+        CLAIM_TIMEOUT_MS: $claimTimeoutMs
+      },
+      ports: {"8080": "HTTP"}
+    }
+  }' > "$CONTAINERS_FILE"
+
+jq -n --arg name "$CLEANUP_CONTAINER_NAME" \
+  '{containerName: $name, containerPort: 8080}' > "$PUBLIC_ENDPOINT_FILE"
+
+aws lightsail create-container-service-deployment \
+  --region "$AWS_REGION" \
+  --service-name "$CLEANUP_SERVICE_NAME" \
+  --containers "file://$CONTAINERS_FILE" \
+  --public-endpoint "file://$PUBLIC_ENDPOINT_FILE" \
+  > "$DEPLOYMENT_RESPONSE_FILE"
+
+TARGET_DEPLOYMENT_VERSION="$(
+  jq -r --arg image "$LIGHTSAIL_IMAGE" '
+    [.containerService.nextDeployment, .containerService.currentDeployment]
+    | map(select(. != null and ([.containers[]?.image] | index($image) != null)))
+    | .[0].version // empty
+  ' "$DEPLOYMENT_RESPONSE_FILE"
+)"
+if [[ -z "$TARGET_DEPLOYMENT_VERSION" ]]; then
+  print -u2 "Could not determine the newly created deployment version"
+  cat "$DEPLOYMENT_RESPONSE_FILE" >&2
+  exit 1
+fi
+
+print "Waiting for cleanup deployment $TARGET_DEPLOYMENT_VERSION to become ACTIVE..."
+DEPLOYMENT_STATE="PENDING"
+DEPLOY_DEADLINE=$((SECONDS + DEPLOY_TIMEOUT_SECONDS))
+while (( SECONDS < DEPLOY_DEADLINE )); do
+  aws lightsail get-container-service-deployments \
+    --region "$AWS_REGION" \
+    --service-name "$CLEANUP_SERVICE_NAME" \
+    > "$DEPLOYMENT_STATUS_FILE"
+
+  DEPLOYMENT_STATE="$(
+    jq -r --arg version "$TARGET_DEPLOYMENT_VERSION" '
+      [.deployments[]? | select((.version | tostring) == $version)][0].state // "PENDING_VISIBILITY"
+    ' "$DEPLOYMENT_STATUS_FILE"
+  )"
+  case "$DEPLOYMENT_STATE" in
+    ACTIVE)
+      print "Cleanup deployment $TARGET_DEPLOYMENT_VERSION is ACTIVE"
+      break
+      ;;
+    FAILED|INACTIVE)
+      print -u2 "Cleanup deployment $TARGET_DEPLOYMENT_VERSION entered state $DEPLOYMENT_STATE"
+      exit 1
+      ;;
+    *)
+      print "Deployment state: $DEPLOYMENT_STATE"
+      sleep "$DEPLOY_POLL_SECONDS"
+      ;;
+  esac
+done
+
+if [[ "$DEPLOYMENT_STATE" != "ACTIVE" ]]; then
+  print -u2 "Timed out after ${DEPLOY_TIMEOUT_SECONDS}s waiting for deployment $TARGET_DEPLOYMENT_VERSION (last state: $DEPLOYMENT_STATE)"
+  exit 1
+fi
+
+SERVICE_URL="$(
+  aws lightsail get-container-services \
+    --region "$AWS_REGION" \
+    --service-name "$CLEANUP_SERVICE_NAME" \
+    --query 'containerServices[0].url' \
+    --output text
+)"
+HEALTH_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "$SERVICE_URL/")"
+if [[ "$HEALTH_STATUS" != "200" ]]; then
+  print -u2 "Cleanup worker health check failed: $SERVICE_URL/ returned $HEALTH_STATUS"
+  exit 1
+fi
+
+print "Cleanup worker health check passed"
+aws lightsail get-container-services \
+  --region "$AWS_REGION" \
+  --service-name "$CLEANUP_SERVICE_NAME" \
+  --query 'containerServices[0].{state:state,url:url,currentDeployment:currentDeployment.state}' \
+  --output table

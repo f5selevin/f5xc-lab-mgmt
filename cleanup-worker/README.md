@@ -19,11 +19,11 @@ docker run -d \
   -e DATABASE_URL='postgresql://user:password@host/database' \
   -e PGSSLMODE=require \
   -e F5XC_DOMAIN='tenant.console.ves.volterra.io' \
-  -e F5XC_API_TOKEN='your-api-token' \
+  -e F5XC_CREDENTIALS_BASE64='base64-encoded-course-credentials' \
   f5xc-lab-cleanup-worker
 ```
 
-For Lightsail Containers, configure the same environment variables in the service deployment. Set the public endpoint to container port `8080`; it returns a minimal health response. Do not place the database URL or API token in the image.
+For Lightsail Containers, configure the same environment variables in the service deployment. For each stale database row, the worker uses its `course_id` to select the domain and key from `F5XC_CREDENTIALS_BASE64`; string credentials use `F5XC_DOMAIN` as the common domain. Set the public endpoint to container port `8080`; it returns a minimal health response. Do not place the database URL or credentials in the image.
 
 ## Optional settings
 
@@ -34,4 +34,4 @@ For Lightsail Containers, configure the same environment variables in the servic
 - `F5XC_TIMEOUT_MS`: individual F5XC request timeout, default `30000`.
 - `PORT`: health endpoint port, default `8080`.
 
-Cleanup claims use row locks, so multiple replicas do not normally process the same row. HTTP 404 responses from deletion are treated as success, making cleanup safe to retry. Successful student records remain in the database with `payload.cleanup.state` set to `cleaned` for audit purposes.
+Cleanup claims use row locks, so multiple replicas do not normally process the same row. The registration access token is deleted before the SMSv2 site is deactivated and deleted. HTTP 404 responses are treated as success. A failed cleanup is marked with `payload.cleanup.state` set to `failed` and is not retried; only an abandoned `processing` claim can be reclaimed after `CLAIM_TIMEOUT_MS`. Successful records are marked `cleaned`, and the token value is removed from `payload.smsv2Site.token`.

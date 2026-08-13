@@ -6,15 +6,37 @@ const { Pool } = pg;
 const scanIntervalMs = Number(process.env.SCAN_INTERVAL_MS || 180000);
 const staleAfterMs = Number(process.env.STALE_AFTER_MS || 300000);
 const claimTimeoutMs = Number(process.env.CLAIM_TIMEOUT_MS || 900000);
-const courseId = 'xcspeccore';
+const supportedCourseIds = ['xcspeccore'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const healthPort = Number(process.env.PORT || 8080);
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-if (!process.env.F5XC_DOMAIN) throw new Error('F5XC_DOMAIN is required');
-if (!process.env.F5XC_API_TOKEN) throw new Error('F5XC_API_TOKEN is required');
+if (!process.env.F5XC_CREDENTIALS_BASE64) throw new Error('F5XC_CREDENTIALS_BASE64 is required');
 if (![scanIntervalMs, staleAfterMs, claimTimeoutMs].every(Number.isFinite)) {
   throw new Error('Worker intervals must be valid numbers');
+}
+
+let credentials;
+try {
+  credentials = JSON.parse(Buffer.from(process.env.F5XC_CREDENTIALS_BASE64, 'base64').toString('utf8'));
+} catch (error) {
+  throw new Error('F5XC_CREDENTIALS_BASE64 must be base64-encoded valid JSON', { cause: error });
+}
+
+function loadCourseCredential(id) {
+  const credential = credentials[id];
+  if (!credential) throw new Error(`F5XC_CREDENTIALS_BASE64 must contain a ${id} credential`);
+
+  const domain = (typeof credential === 'string'
+    ? process.env.F5XC_DOMAIN
+    : credential.domain || credential.address || process.env.F5XC_DOMAIN
+  )?.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const key = typeof credential === 'string'
+    ? credential
+    : credential.key || credential.apiKey || credential.apikey;
+
+  if (!domain || !key) throw new Error(`F5XC credential for ${id} requires both an XC domain and API key`);
+  return { domain, key };
 }
 
 const sslMode = process.env.PGSSLMODE || 'require';
@@ -23,14 +45,17 @@ const pool = new Pool({
   ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode === 'verify-full' },
   max: Number(process.env.PGPOOL_MAX || 3),
 });
-const f5xc = axios.create({
-  baseURL: `https://${process.env.F5XC_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '')}`,
-  headers: {
-    Authorization: `APIToken ${process.env.F5XC_API_TOKEN}`,
-    'Content-Type': 'application/json',
-  },
-  timeout: Number(process.env.F5XC_TIMEOUT_MS || 30000),
-});
+function createF5xcClient(id) {
+  const credential = loadCourseCredential(id);
+  return axios.create({
+    baseURL: `https://${credential.domain}`,
+    headers: {
+      Authorization: `APIToken ${credential.key}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: Number(process.env.F5XC_TIMEOUT_MS || 30000),
+  });
+}
 
 async function claimStaleStudents() {
   const client = await pool.connect();
@@ -40,12 +65,11 @@ async function claimStaleStudents() {
       `WITH candidates AS (
          SELECT course_id, student_hash
          FROM students
-         WHERE course_id = $1
+         WHERE course_id = ANY($1::text[])
            AND payload ? 'lastSeen'
            AND (payload->>'lastSeen')::timestamptz < now() - ($2::bigint * interval '1 millisecond')
            AND (
              payload->'cleanup' IS NULL
-             OR payload->'cleanup'->>'state' = 'failed'
              OR (
                payload->'cleanup'->>'state' = 'processing'
                AND (payload->'cleanup'->>'claimedAt')::timestamptz < now() - ($3::bigint * interval '1 millisecond')
@@ -67,7 +91,7 @@ async function claimStaleStudents() {
        WHERE student.course_id = candidates.course_id
          AND student.student_hash = candidates.student_hash
        RETURNING student.course_id, student.student_hash, student.payload`,
-      [courseId, staleAfterMs, claimTimeoutMs],
+      [supportedCourseIds, staleAfterMs, claimTimeoutMs],
     );
     await client.query('COMMIT');
     return result.rows;
@@ -87,11 +111,11 @@ async function ignoreMissing(request) {
   }
 }
 
-async function deleteIfPresent(url, data) {
+async function deleteIfPresent(f5xc, url, data) {
   await ignoreMissing(() => f5xc.delete(url, data ? { data } : undefined));
 }
 
-async function deactivateSiteIfPresent(name) {
+async function deactivateSiteIfPresent(f5xc, name) {
   await ignoreMissing(() => f5xc.post(`/api/register/namespaces/system/site/${encodeURIComponent(name)}/state`, {
     namespace: 'system',
     name,
@@ -99,16 +123,17 @@ async function deactivateSiteIfPresent(name) {
   }));
 }
 
-async function cleanupSpecCore(payload) {
+async function cleanupSpecCore(f5xc, payload) {
   const { siteName, tokenName } = payload.smsv2Site || {};
   if (!siteName || !tokenName) throw new Error('Student payload is missing smsv2Site.siteName or tokenName');
 
-  await deleteIfPresent(`/api/register/namespaces/system/tokens/${encodeURIComponent(tokenName)}`, {
+  // Delete the registration access token before deactivating and deleting its SMSv2 site.
+  await deleteIfPresent(f5xc, `/api/register/namespaces/system/tokens/${encodeURIComponent(tokenName)}`, {
     name: tokenName,
     namespace: 'system',
   });
-  await deactivateSiteIfPresent(siteName);
-  await deleteIfPresent(`/api/config/namespaces/system/securemesh_site_v2s/${encodeURIComponent(siteName)}`, {
+  await deactivateSiteIfPresent(f5xc, siteName);
+  await deleteIfPresent(f5xc, `/api/config/namespaces/system/securemesh_site_v2s/${encodeURIComponent(siteName)}`, {
     name: siteName,
     namespace: 'system',
     fail_if_referred: false,
@@ -125,23 +150,29 @@ async function setCleanupResult(row, state, error) {
   };
   await pool.query(
     `UPDATE students
-     SET payload = jsonb_set(payload, '{cleanup}', $3::jsonb, true), updated_at = now()
+     SET payload = CASE
+           WHEN $4::boolean
+             THEN jsonb_set(payload #- '{smsv2Site,token}', '{cleanup}', $3::jsonb, true)
+           ELSE jsonb_set(payload, '{cleanup}', $3::jsonb, true)
+         END,
+         updated_at = now()
      WHERE course_id = $1 AND student_hash = $2`,
-    [row.course_id, row.student_hash, JSON.stringify(cleanup)],
+    [row.course_id, row.student_hash, JSON.stringify(cleanup), state === 'cleaned'],
   );
 }
 
 async function scan() {
   const rows = await claimStaleStudents();
-  console.log(`Found ${rows.length} stale ${courseId} deployment(s)`);
+  console.log(`Found ${rows.length} stale supported deployment(s)`);
   for (const row of rows) {
     try {
-      await cleanupSpecCore(row.payload);
+      const f5xc = createF5xcClient(row.course_id);
+      await cleanupSpecCore(f5xc, row.payload);
       await setCleanupResult(row, 'cleaned');
-      console.log(`Cleaned ${row.student_hash} deployment ${row.payload.deploymentId}`);
+      console.log(`Cleaned ${row.course_id}/${row.student_hash} deployment ${row.payload.deploymentId}`);
     } catch (error) {
       await setCleanupResult(row, 'failed', error);
-      console.error(`Cleanup failed for ${row.student_hash}:`, error.response?.data || error.message);
+      console.error(`Cleanup failed for ${row.course_id}/${row.student_hash}:`, error.response?.data || error.message);
     }
   }
 }

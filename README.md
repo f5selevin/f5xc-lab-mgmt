@@ -27,4 +27,9 @@ A workshop can override the common address by using an object:
 { "xcspeccore": { "domain": "tenant.console.ves.volterra.io", "key": "key1" } }
 ```
 
-Set the result in `.env` as `F5XC_CREDENTIALS_BASE64`. `deploy-lightsail.sh` validates it before building and injects both `F5XC_CREDENTIALS_BASE64` and `F5XC_DOMAIN` into the Lightsail container environment. The secret is intentionally not stored in the Docker image.
+Set the result in `.env` as `F5XC_CREDENTIALS_BASE64`. `deploy-mgmt-lightsail` validates it before building and injects both `F5XC_CREDENTIALS_BASE64` and `F5XC_DOMAIN` into the Lightsail container environment. The secret is intentionally not stored in the Docker image.
+
+## Lightsail deployment scripts
+
+- `deploy-mgmt-lightsail` deploys the management API.
+- `deploy-cleanup-lightsail` builds and deploys `cleanup-worker`. It requires `CLEANUP_SERVICE_NAME` and `F5XC_CREDENTIALS_BASE64` in `.env`. For each cleanup item, the worker reads `course_id` from the database row and uses it to select the domain and key. `CLEANUP_CONTAINER_NAME`, `CLEANUP_LOCAL_IMAGE`, and `CLEANUP_IMAGE_LABEL` are optional.
