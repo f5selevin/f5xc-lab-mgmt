@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { createServer } from 'node:http';
 import pg from 'pg';
+import { isDashboardAuthenticated, renderDashboard } from './dashboard.mjs';
 
 const { Pool } = pg;
 const scanIntervalMs = Number(process.env.SCAN_INTERVAL_MS || 180000);
@@ -9,6 +10,25 @@ const claimTimeoutMs = Number(process.env.CLAIM_TIMEOUT_MS || 900000);
 const supportedCourseIds = ['xcspeccore'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const healthPort = Number(process.env.PORT || 8080);
+let scanSequence = 0;
+
+function errorDetails(error) {
+  if (!(error instanceof Error)) return { message: String(error) };
+  return {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    stack: error.stack,
+    httpStatus: error.response?.status,
+    responseData: error.response?.data,
+  };
+}
+
+function log(level, event, details = {}) {
+  const entry = { timestamp: new Date().toISOString(), level, service: 'cleanup-worker', event, ...details };
+  const output = JSON.stringify(entry);
+  (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(output);
+}
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
 if (!process.env.F5XC_CREDENTIALS_BASE64) throw new Error('F5XC_CREDENTIALS_BASE64 is required');
@@ -47,6 +67,7 @@ const pool = new Pool({
 });
 function createF5xcClient(id) {
   const credential = loadCourseCredential(id);
+  log('info', 'f5xc_client_created', { courseId: id, domain: credential.domain });
   return axios.create({
     baseURL: `https://${credential.domain}`,
     headers: {
@@ -57,10 +78,15 @@ function createF5xcClient(id) {
   });
 }
 
-async function claimStaleStudents() {
-  const client = await pool.connect();
+async function claimStaleStudents(scanId) {
+  const startedAt = Date.now();
+  log('info', 'claim_started', { scanId, supportedCourseIds, staleAfterMs, claimTimeoutMs });
+  let client;
   try {
+    client = await pool.connect();
+    log('info', 'database_client_acquired', { scanId });
     await client.query('BEGIN');
+    log('info', 'claim_transaction_started', { scanId });
     const result = await client.query(
       `WITH candidates AS (
          SELECT course_id, student_hash
@@ -94,53 +120,93 @@ async function claimStaleStudents() {
       [supportedCourseIds, staleAfterMs, claimTimeoutMs],
     );
     await client.query('COMMIT');
+    log('info', 'claim_completed', {
+      scanId,
+      claimedCount: result.rowCount,
+      deployments: result.rows.map(({ course_id: courseId, student_hash: studentHash }) => ({ courseId, studentHash })),
+      durationMs: Date.now() - startedAt,
+    });
     return result.rows;
   } catch (error) {
-    await client.query('ROLLBACK');
+    log('error', 'claim_failed', { scanId, durationMs: Date.now() - startedAt, error: errorDetails(error) });
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+        log('info', 'claim_rollback_completed', { scanId });
+      } catch (rollbackError) {
+        log('error', 'claim_rollback_failed', { scanId, error: errorDetails(rollbackError) });
+      }
+    }
     throw error;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+      log('info', 'database_client_released', { scanId });
+    }
   }
 }
 
-async function ignoreMissing(request) {
+async function runF5xcOperation(action, context, request) {
+  const startedAt = Date.now();
+  log('info', 'f5xc_operation_started', { ...context, action });
   try {
-    await request();
+    const response = await request();
+    log('info', 'f5xc_operation_completed', {
+      ...context,
+      action,
+      httpStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (error) {
-    if (error.response?.status !== 404) throw error;
+    if (error.response?.status === 404) {
+      log('info', 'f5xc_resource_already_absent', { ...context, action, httpStatus: 404, durationMs: Date.now() - startedAt });
+      return;
+    }
+    log('error', 'f5xc_operation_failed', {
+      ...context,
+      action,
+      durationMs: Date.now() - startedAt,
+      error: errorDetails(error),
+    });
+    throw error;
   }
 }
 
-async function deleteIfPresent(f5xc, url, data) {
-  await ignoreMissing(() => f5xc.delete(url, data ? { data } : undefined));
+async function deleteIfPresent(f5xc, url, data, action, context) {
+  await runF5xcOperation(action, context, () => f5xc.delete(url, data ? { data } : undefined));
 }
 
-async function deactivateSiteIfPresent(f5xc, name) {
-  await ignoreMissing(() => f5xc.post(`/api/register/namespaces/system/site/${encodeURIComponent(name)}/state`, {
-    namespace: 'system',
-    name,
-    state: 7,
-  }));
+async function deactivateSiteIfPresent(f5xc, name, context) {
+  await runF5xcOperation('deactivate_site', { ...context, siteName: name }, () => (
+    f5xc.post(`/api/register/namespaces/system/site/${encodeURIComponent(name)}/state`, {
+      namespace: 'system',
+      name,
+      state: 7,
+    })
+  ));
 }
 
-async function cleanupSpecCore(f5xc, payload) {
+async function cleanupSpecCore(f5xc, payload, context) {
   const { siteName, tokenName } = payload.smsv2Site || {};
   if (!siteName || !tokenName) throw new Error('Student payload is missing smsv2Site.siteName or tokenName');
 
+  log('info', 'deployment_cleanup_started', { ...context, siteName, tokenName });
   // Delete the registration access token before deactivating and deleting its SMSv2 site.
   await deleteIfPresent(f5xc, `/api/register/namespaces/system/tokens/${encodeURIComponent(tokenName)}`, {
     name: tokenName,
     namespace: 'system',
-  });
-  await deactivateSiteIfPresent(f5xc, siteName);
+  }, 'delete_registration_token', { ...context, tokenName });
+  await deactivateSiteIfPresent(f5xc, siteName, context);
   await deleteIfPresent(f5xc, `/api/config/namespaces/system/securemesh_site_v2s/${encodeURIComponent(siteName)}`, {
     name: siteName,
     namespace: 'system',
     fail_if_referred: false,
-  });
+  }, 'delete_secure_mesh_site', { ...context, siteName });
+  log('info', 'deployment_resources_cleaned', { ...context, siteName, tokenName });
 }
 
-async function setCleanupResult(row, state, error) {
+async function setCleanupResult(row, state, error, context) {
+  const startedAt = Date.now();
   const cleanup = {
     state,
     ...(state === 'cleaned' ? { cleanedAt: new Date().toISOString() } : {
@@ -148,7 +214,8 @@ async function setCleanupResult(row, state, error) {
       error: String(error?.message || error).slice(0, 2000),
     }),
   };
-  await pool.query(
+  log('info', 'cleanup_result_update_started', { ...context, state });
+  const result = await pool.query(
     `UPDATE students
      SET payload = CASE
            WHEN $4::boolean
@@ -159,48 +226,186 @@ async function setCleanupResult(row, state, error) {
      WHERE course_id = $1 AND student_hash = $2`,
     [row.course_id, row.student_hash, JSON.stringify(cleanup), state === 'cleaned'],
   );
+  log('info', 'cleanup_result_update_completed', {
+    ...context,
+    state,
+    updatedCount: result.rowCount,
+    durationMs: Date.now() - startedAt,
+  });
 }
 
 async function scan() {
-  const rows = await claimStaleStudents();
-  console.log(`Found ${rows.length} stale supported deployment(s)`);
+  scanInProgress = true;
+  const scanId = `${Date.now()}-${++scanSequence}`;
+  const startedAt = Date.now();
+  log('info', 'scan_started', { scanId });
+  const rows = await claimStaleStudents(scanId);
+  let cleanedCount = 0;
+  let failedCount = 0;
   for (const row of rows) {
+    const context = {
+      scanId,
+      courseId: row.course_id,
+      studentHash: row.student_hash,
+      deploymentId: row.payload.deploymentId,
+    };
+    log('info', 'deployment_processing_started', context);
     try {
       const f5xc = createF5xcClient(row.course_id);
-      await cleanupSpecCore(f5xc, row.payload);
-      await setCleanupResult(row, 'cleaned');
-      console.log(`Cleaned ${row.course_id}/${row.student_hash} deployment ${row.payload.deploymentId}`);
+      await cleanupSpecCore(f5xc, row.payload, context);
+      await setCleanupResult(row, 'cleaned', undefined, context);
+      cleanedCount += 1;
+      log('info', 'deployment_processing_completed', context);
     } catch (error) {
-      await setCleanupResult(row, 'failed', error);
-      console.error(`Cleanup failed for ${row.course_id}/${row.student_hash}:`, error.response?.data || error.message);
+      failedCount += 1;
+      log('error', 'deployment_processing_failed', { ...context, error: errorDetails(error) });
+      try {
+        await setCleanupResult(row, 'failed', error, context);
+      } catch (resultError) {
+        log('error', 'cleanup_failure_result_update_failed', { ...context, error: errorDetails(resultError) });
+      }
     }
   }
+  log('info', 'scan_completed', {
+    scanId,
+    claimedCount: rows.length,
+    cleanedCount,
+    failedCount,
+    durationMs: Date.now() - startedAt,
+  });
 }
 
-const healthServer = createServer((_request, response) => {
-  response.writeHead(200, { 'content-type': 'application/json' });
-  response.end('{"status":"ok"}');
-});
-healthServer.listen(healthPort, '0.0.0.0', () => console.log(`Health endpoint listening on ${healthPort}`));
+let workerEnabled = true;
+let terminating = false;
+let scanInProgress = false;
+let lastScanCompletedAt;
+let wakeScheduler;
 
-let stopping = false;
+function wakeWorker() {
+  wakeScheduler?.();
+  wakeScheduler = undefined;
+}
+
+function waitForWorker(timeoutMs) {
+  return new Promise((resolve) => {
+    const timer = timeoutMs === undefined ? undefined : setTimeout(finish, timeoutMs);
+    function finish() {
+      if (timer) clearTimeout(timer);
+      if (wakeScheduler === finish) wakeScheduler = undefined;
+      resolve();
+    }
+    wakeScheduler = finish;
+  });
+}
+
+function sendDashboardAuthentication(response) {
+  response.writeHead(401, {
+    'WWW-Authenticate': 'Basic realm="F5XC Lab Monitor", charset="UTF-8"',
+    'Cache-Control': 'no-store',
+    'Content-Type': 'text/plain; charset=utf-8',
+  });
+  response.end('Authentication required');
+}
+
+function redirectToDashboard(response) {
+  response.writeHead(303, { Location: '/dashboard', 'Cache-Control': 'no-store' });
+  response.end();
+}
+
+const healthServer = createServer((request, response) => {
+  const startedAt = Date.now();
+  const requestUrl = new URL(request.url || '/', 'http://localhost');
+  const requestContext = {
+    method: request.method,
+    path: requestUrl.pathname,
+    remoteAddress: request.socket.remoteAddress,
+  };
+
+  if (requestUrl.pathname.startsWith('/dashboard') && !isDashboardAuthenticated(request)) {
+    log('warn', 'dashboard_authentication_failed', requestContext);
+    sendDashboardAuthentication(response);
+  } else if (request.method === 'GET' && requestUrl.pathname === '/dashboard') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(renderDashboard({
+      enabled: workerEnabled,
+      scanInProgress,
+      lastScanCompletedAt,
+      scanIntervalMs,
+    }));
+  } else if (request.method === 'POST' && requestUrl.pathname === '/dashboard/start') {
+    const changed = !workerEnabled;
+    workerEnabled = true;
+    wakeWorker();
+    log('info', 'worker_enabled_from_dashboard', { ...requestContext, changed });
+    redirectToDashboard(response);
+  } else if (request.method === 'POST' && requestUrl.pathname === '/dashboard/stop') {
+    const changed = workerEnabled;
+    workerEnabled = false;
+    wakeWorker();
+    log('info', 'worker_disabled_from_dashboard', { ...requestContext, changed, scanInProgress });
+    redirectToDashboard(response);
+  } else if (request.method === 'GET' && requestUrl.pathname === '/') {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ status: 'ok', worker: workerEnabled ? 'running' : 'stopped' }));
+  } else {
+    response.writeHead(404, { 'Content-Type': 'application/json' });
+    response.end('{"error":"not found"}');
+  }
+
+  response.once('finish', () => log('info', 'http_request_completed', {
+    ...requestContext,
+    httpStatus: response.statusCode,
+    durationMs: Date.now() - startedAt,
+  }));
+});
+healthServer.on('error', (error) => log('error', 'health_server_error', { error: errorDetails(error) }));
+healthServer.listen(healthPort, '0.0.0.0', () => log('info', 'health_server_started', { port: healthPort }));
+
 const stop = (signal) => {
-  console.log(`${signal} received; stopping after the current scan`);
-  stopping = true;
+  log('info', 'shutdown_requested', { signal });
+  terminating = true;
+  wakeWorker();
 };
 process.once('SIGTERM', () => stop('SIGTERM'));
 process.once('SIGINT', () => stop('SIGINT'));
 
+log('info', 'worker_started', {
+  scanIntervalMs,
+  staleAfterMs,
+  claimTimeoutMs,
+  healthPort,
+  poolMax: pool.options.max,
+  supportedCourseIds,
+});
+
 try {
-  while (!stopping) {
+  while (!terminating) {
+    if (!workerEnabled) {
+      log('info', 'worker_paused');
+      await waitForWorker();
+      continue;
+    }
+
     try {
       await scan();
     } catch (error) {
-      console.error('Cleanup scan failed:', error);
+      log('error', 'scan_failed', { error: errorDetails(error) });
+    } finally {
+      scanInProgress = false;
+      lastScanCompletedAt = new Date().toISOString();
     }
-    if (!stopping) await delay(scanIntervalMs);
+
+    if (!terminating && workerEnabled) {
+      log('info', 'scan_sleep_started', { durationMs: scanIntervalMs });
+      await waitForWorker(scanIntervalMs);
+      log('info', 'scan_sleep_completed', { durationMs: scanIntervalMs });
+    }
   }
 } finally {
+  log('info', 'worker_shutdown_started');
   await new Promise((resolve) => healthServer.close(resolve));
+  log('info', 'health_server_stopped');
   await pool.end();
+  log('info', 'database_pool_closed');
+  log('info', 'worker_stopped');
 }

@@ -27,6 +27,7 @@ CLEANUP_CONTAINER_NAME="${CLEANUP_CONTAINER_NAME:-cleanup-worker}"
 CLEANUP_LOCAL_IMAGE="${CLEANUP_LOCAL_IMAGE:-f5xc-lab-cleanup-worker}"
 CLEANUP_IMAGE_LABEL="${CLEANUP_IMAGE_LABEL:-cleanup}"
 PGSSLMODE="${PGSSLMODE:-require}"
+DASHBOARD_PASSWORD="${DASHBOARD_PASSWORD:-xcspeclabs}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-rancher-desktop}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-900}"
 DEPLOY_POLL_SECONDS="${DEPLOY_POLL_SECONDS:-10}"
@@ -72,7 +73,7 @@ DEPLOYMENT_RESPONSE_FILE="$(mktemp)"
 DEPLOYMENT_STATUS_FILE="$(mktemp)"
 cleanup() {
   rm -f "$CONTAINERS_FILE" "$PUBLIC_ENDPOINT_FILE" "$DEPLOYMENT_RESPONSE_FILE" "$DEPLOYMENT_STATUS_FILE"
-  unset DB_PASSWORD DATABASE_URL F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN
+  unset DB_PASSWORD DATABASE_URL F5XC_CREDENTIALS_BASE64 F5XC_DOMAIN DASHBOARD_PASSWORD
 }
 trap cleanup EXIT
 
@@ -122,6 +123,7 @@ jq -n \
   --arg scanIntervalMs "${SCAN_INTERVAL_MS:-180000}" \
   --arg staleAfterMs "${STALE_AFTER_MS:-300000}" \
   --arg claimTimeoutMs "${CLAIM_TIMEOUT_MS:-900000}" \
+  --arg dashboardPassword "$DASHBOARD_PASSWORD" \
   '{
     ($name): {
       image: $image,
@@ -132,7 +134,8 @@ jq -n \
         F5XC_CREDENTIALS_BASE64: $f5xcCredentialsBase64,
         SCAN_INTERVAL_MS: $scanIntervalMs,
         STALE_AFTER_MS: $staleAfterMs,
-        CLAIM_TIMEOUT_MS: $claimTimeoutMs
+        CLAIM_TIMEOUT_MS: $claimTimeoutMs,
+        DASHBOARD_PASSWORD: $dashboardPassword
       },
       ports: {"8080": "HTTP"}
     }
@@ -204,12 +207,13 @@ SERVICE_URL="$(
     --output text
 )"
 HEALTH_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "$SERVICE_URL/")"
-if [[ "$HEALTH_STATUS" != "200" ]]; then
-  print -u2 "Cleanup worker health check failed: $SERVICE_URL/ returned $HEALTH_STATUS"
+DASHBOARD_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "$SERVICE_URL/dashboard")"
+if [[ "$HEALTH_STATUS" != "200" || "$DASHBOARD_STATUS" != "401" ]]; then
+  print -u2 "Cleanup worker route validation failed: / returned $HEALTH_STATUS; /dashboard returned $DASHBOARD_STATUS (expected 200 and 401)"
   exit 1
 fi
 
-print "Cleanup worker health check passed"
+print "Cleanup worker route validation passed"
 aws lightsail get-container-services \
   --region "$AWS_REGION" \
   --service-name "$CLEANUP_SERVICE_NAME" \
