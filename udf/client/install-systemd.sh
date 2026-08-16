@@ -22,7 +22,23 @@ if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   exit 1
 fi
 
-install -d -o "${SERVICE_USER}" -g "$(id -gn "${SERVICE_USER}")" -m 0755 "/home/${SERVICE_USER}/startup"
+SERVICE_HOME="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)"
+STARTUP_DIR="${SERVICE_HOME}/startup"
+TARGET_PATH="${STARTUP_DIR}/startup.sh"
+
+if [[ -z "${SERVICE_HOME}" || ! -d "${SERVICE_HOME}" ]]; then
+  echo "Home directory for ${SERVICE_USER} does not exist: ${SERVICE_HOME}" >&2
+  exit 1
+fi
+
+SERVICE_GROUP="$(id -gn "${SERVICE_USER}")"
+install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0755 "${STARTUP_DIR}"
+if [[ "$(realpath "${SOURCE_PATH}")" != "$(realpath -m "${TARGET_PATH}")" ]]; then
+  install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0755 "${SOURCE_PATH}" "${TARGET_PATH}"
+else
+  chown "${SERVICE_USER}:${SERVICE_GROUP}" "${TARGET_PATH}"
+  chmod 0755 "${TARGET_PATH}"
+fi
 
 cat >"${UNIT_PATH}" <<EOF
 [Unit]
@@ -33,10 +49,10 @@ After=network-online.target docker.service
 [Service]
 Type=oneshot
 User=${SERVICE_USER}
-Group=$(id -gn "${SERVICE_USER}")
-Environment=HOME=/home/${SERVICE_USER}
-WorkingDirectory=${SCRIPT_DIR}
-ExecStart=/bin/bash ${SOURCE_PATH}
+Group=${SERVICE_GROUP}
+Environment=HOME=${SERVICE_HOME}
+WorkingDirectory=${STARTUP_DIR}
+ExecStart=/bin/bash ${TARGET_PATH}
 TimeoutStartSec=infinity
 RemainAfterExit=yes
 
