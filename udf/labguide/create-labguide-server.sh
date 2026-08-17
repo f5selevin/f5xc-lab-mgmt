@@ -12,7 +12,8 @@ IMAGE_NAME="${LABGUIDE_IMAGE:-f5xc-labguide-server}"
 CONTAINER_NAME="${LABGUIDE_CONTAINER:-f5xc-labguide-server}"
 HOST_PORT="${LABGUIDE_PORT:-3500}"
 METADATA_IP="${LABGUIDE_METADATA_IP:-10.1.1.4}"
-METADATA_URL="${LABGUIDE_METADATA_URL:-http://${METADATA_IP}/metadata}"
+METADATA_PORT="${LABGUIDE_METADATA_PORT:-5123}"
+METADATA_URL="${LABGUIDE_METADATA_URL:-http://${METADATA_IP}:${METADATA_PORT}/metadata}"
 
 for command in git docker; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -59,7 +60,6 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 ENV PORT=3500
 ENV HOSTNAME=0.0.0.0
-ENV METADATA_URL=http://10.1.1.4:5123/metadata
 WORKDIR /app/src
 COPY --from=builder /app/src ./
 COPY --from=builder /app/docs /app/docs
