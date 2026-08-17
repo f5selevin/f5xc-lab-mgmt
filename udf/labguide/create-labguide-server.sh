@@ -57,6 +57,7 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 ENV PORT=3500
 ENV HOSTNAME=0.0.0.0
+ENV METADATA_URL=http://metadata.udf/metadata
 WORKDIR /app/src
 COPY --from=builder /app/src ./
 COPY --from=builder /app/docs /app/docs
@@ -79,6 +80,7 @@ docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
+  -e METADATA_URL=http://metadata.udf/metadata \
   -p "${HOST_PORT}:3500" \
   "${IMAGE_NAME}"
 
