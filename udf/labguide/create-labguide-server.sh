@@ -72,16 +72,24 @@ src/.next
 docs/.git
 EOF
 
-echo "Building ${IMAGE_NAME}"
-docker build --pull -t "${IMAGE_NAME}" "${BUILD_DIR}"
+echo "Framework commit: $(git -C "${SRC_DIR}" rev-parse HEAD)"
+echo "Documentation commit: $(git -C "${DOCS_DIR}" rev-parse HEAD)"
+echo "Building ${IMAGE_NAME} without cached layers"
+docker build --no-cache --pull -t "${IMAGE_NAME}" "${BUILD_DIR}"
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${IMAGE_NAME}")"
 
-echo "Starting ${CONTAINER_NAME} on port ${HOST_PORT}"
+echo "Removing any existing ${CONTAINER_NAME} container"
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-docker run -d \
+
+echo "Starting a new ${CONTAINER_NAME} container on port ${HOST_PORT}"
+CONTAINER_ID="$(docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
   -e METADATA_URL=http://metadata.udf/metadata \
   -p "${HOST_PORT}:3500" \
-  "${IMAGE_NAME}"
+  "${IMAGE_NAME}")"
 
+echo "Built image: ${IMAGE_ID}"
+echo "Started container: ${CONTAINER_ID}"
+docker ps --filter "id=${CONTAINER_ID}" --format 'Container {{.ID}} is {{.Status}} on {{.Ports}}'
 echo "Labguide server is available on port ${HOST_PORT}."
