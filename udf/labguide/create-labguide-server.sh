@@ -11,9 +11,15 @@ DOCS_DIR="${BUILD_DIR}/docs"
 IMAGE_NAME="${LABGUIDE_IMAGE:-f5xc-labguide-server}"
 CONTAINER_NAME="${LABGUIDE_CONTAINER:-f5xc-labguide-server}"
 HOST_PORT="${LABGUIDE_PORT:-3500}"
+
 METADATA_IP="${LABGUIDE_METADATA_IP:-10.1.1.4}"
 METADATA_PORT="${LABGUIDE_METADATA_PORT:-5123}"
+
+DEPLOYMENT_HOST="${LABGUIDE_DEPLOYMENT_HOST:-metadata.udf}"
+DEPLOYMENT_IP="${LABGUIDE_DEPLOYMENT_IP:-10.1.1.1}"
+
 METADATA_URL="${LABGUIDE_METADATA_URL:-http://${METADATA_IP}:${METADATA_PORT}/metadata}"
+DEPLOYMENT_URL="${LABGUIDE_DEPLOYMENT_URL:-http://${DEPLOYMENT_HOST}/deployment}"
 
 for command in git docker; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -55,6 +61,7 @@ WORKDIR /app/src
 COPY --from=dependencies /app/src/node_modules ./node_modules
 COPY src/ ./
 COPY docs/ /app/docs/
+RUN node -e 'const fs = require("fs"); const path = "components/rst-widgets.tsx"; const source = fs.readFileSync(path, "utf8"); const original = `const deploymentUrl = process.env.NODE_ENV === "development"\n  ? "http://localhost:5123/deployment"\n  : "http://metadata.udf/deployment";`; const replacement = `const deploymentUrl = process.env.DEPLOYMENT_URL || (process.env.NODE_ENV === "development"\n  ? "http://localhost:5123/deployment"\n  : "http://metadata.udf/deployment");`; if (!source.includes(original)) throw new Error("Unable to add DEPLOYMENT_URL support"); fs.writeFileSync(path, source.replace(original, replacement));'
 RUN npm run build
 
 FROM node:22-alpine AS runner
@@ -85,12 +92,14 @@ echo "Removing any existing ${CONTAINER_NAME} container"
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
 echo "Using metadata endpoint ${METADATA_URL}"
+echo "Using deployment endpoint ${DEPLOYMENT_URL}"
 echo "Starting a new ${CONTAINER_NAME} container on port ${HOST_PORT}"
 CONTAINER_ID="$(docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
-  --add-host "metadata.udf:${METADATA_IP}" \
+  --add-host "${DEPLOYMENT_HOST}:${DEPLOYMENT_IP}" \
   -e METADATA_URL="${METADATA_URL}" \
+  -e DEPLOYMENT_URL="${DEPLOYMENT_URL}" \
   -p "${HOST_PORT}:3500" \
   "${IMAGE_NAME}")"
 
