@@ -59,7 +59,7 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 ENV PORT=3500
 ENV HOSTNAME=0.0.0.0
-ENV METADATA_URL=http://10.1.1.4/metadata
+ENV METADATA_URL=http://10.1.1.4:5123/metadata
 WORKDIR /app/src
 COPY --from=builder /app/src ./
 COPY --from=builder /app/docs /app/docs
