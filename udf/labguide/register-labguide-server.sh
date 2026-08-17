@@ -59,7 +59,8 @@ EOF
 chmod 0644 "${UNIT_PATH}"
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
-systemctl start "${SERVICE_NAME}"
+echo "Starting ${SERVICE_NAME}; cloning repositories and building the image may take several minutes..."
+systemctl restart "${SERVICE_NAME}"
 
-echo "Installed, enabled, and started ${SERVICE_NAME}."
+echo "Installed, enabled, and restarted ${SERVICE_NAME}."
 echo "View its status with: systemctl status ${SERVICE_NAME}"
