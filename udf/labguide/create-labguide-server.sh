@@ -50,6 +50,7 @@ COPY src/package.json src/package-lock.json ./
 RUN npm ci
 
 FROM node:22-alpine AS builder
+ENV NODE_ENV=production
 WORKDIR /app/src
 COPY --from=dependencies /app/src/node_modules ./node_modules
 COPY src/ ./
