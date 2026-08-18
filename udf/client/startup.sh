@@ -5,6 +5,8 @@ set -o pipefail
 STARTUP_HOME="${HOME:-/home/ubuntu}"
 STARTUP_DIR="${STARTUP_HOME}/startup"
 LAB_DIR="${STARTUP_HOME}/lab"
+NETWORK_CHECK_URL="${NETWORK_CHECK_URL:-https://xs.partner-spec.f5demos.com/}"
+NETWORK_CHECK_INTERVAL_SECONDS="${NETWORK_CHECK_INTERVAL_SECONDS:-10}"
 
 exec 9>"${STARTUP_DIR}/startup.lock"
 if ! flock -n 9; then
@@ -15,6 +17,28 @@ fi
 exec 3>&1 4>&2
 trap 'exec 2>&4 1>&3' 0 1 2 3
 exec 1>"${STARTUP_DIR}/startup.log" 2>&1
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "Required command not found: curl" >&2
+  exit 1
+fi
+
+wait_for_network() {
+  local status
+
+  echo "Waiting for network access: ${NETWORK_CHECK_URL}"
+  while true; do
+    status="$(curl --location --silent --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 5 --max-time 15 "${NETWORK_CHECK_URL}" || true)"
+    if [ "${status}" = "200" ]; then
+      echo "Network is available (${NETWORK_CHECK_URL} returned 200)"
+      return 0
+    fi
+
+    echo "Network is not ready (${NETWORK_CHECK_URL} returned ${status:-no response}); retrying in ${NETWORK_CHECK_INTERVAL_SECONDS}s"
+    sleep "${NETWORK_CHECK_INTERVAL_SECONDS}"
+  done
+}
 
 setup_node_runtime() {
   if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
@@ -58,6 +82,7 @@ install_ping_client() {
     return 1
   fi
 
+  wait_for_network || return 1
   echo "Building and starting the deployment ping client from $client_dir"
   docker build --no-cache --pull -t "$image" "$client_dir" || return 1
   docker rm -f "$container" >/dev/null 2>&1 || true
@@ -76,6 +101,7 @@ if test -f "${STARTUP_DIR}/deployed"; then
 fi
 
 sleep 60
+wait_for_network
 
 rm -rf "${LAB_DIR}"
 

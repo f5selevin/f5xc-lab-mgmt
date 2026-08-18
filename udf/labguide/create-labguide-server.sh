@@ -21,13 +21,34 @@ DEPLOYMENT_IP="${LABGUIDE_DEPLOYMENT_IP:-10.1.1.1}"
 METADATA_URL="${LABGUIDE_METADATA_URL:-http://${METADATA_IP}:${METADATA_PORT}/metadata}"
 DEPLOYMENT_URL="${LABGUIDE_DEPLOYMENT_URL:-http://${DEPLOYMENT_HOST}/deployment}"
 
-for command in git docker; do
+NETWORK_CHECK_URL="${NETWORK_CHECK_URL:-https://xs.partner-spec.f5demos.com/}"
+NETWORK_CHECK_INTERVAL_SECONDS="${NETWORK_CHECK_INTERVAL_SECONDS:-10}"
+
+for command in curl git docker; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "Required command not found: ${command}" >&2
     exit 1
   fi
 done
 
+wait_for_network() {
+  local status
+
+  echo "Waiting for network access: ${NETWORK_CHECK_URL}"
+  while true; do
+    status="$(curl --location --silent --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 5 --max-time 15 "${NETWORK_CHECK_URL}" || true)"
+    if [[ "${status}" == "200" ]]; then
+      echo "Network is available (${NETWORK_CHECK_URL} returned 200)"
+      return 0
+    fi
+
+    echo "Network is not ready (${NETWORK_CHECK_URL} returned ${status:-no response}); retrying in ${NETWORK_CHECK_INTERVAL_SECONDS}s"
+    sleep "${NETWORK_CHECK_INTERVAL_SECONDS}"
+  done
+}
+
+wait_for_network
 mkdir -p "${BUILD_DIR}"
 
 clone_or_update() {
