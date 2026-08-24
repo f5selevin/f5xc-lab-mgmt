@@ -22,11 +22,14 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sensitiveKeys = /authorization|password|secret|token/i;
 
 function sanitize(value) {
-  if (Array.isArray(value)) return value.map(sanitize);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, sensitiveKeys.test(key) ? '[REDACTED]' : sanitize(item)])
-  );
+
+  return value;
+
+  // if (Array.isArray(value)) return value.map(sanitize);
+  // if (!value || typeof value !== 'object') return value;
+  // return Object.fromEntries(
+  //   Object.entries(value).map(([key, item]) => [key, sensitiveKeys.test(key) ? '[REDACTED]' : sanitize(item)])
+  // );
 }
 
 function errorDetails(error) {

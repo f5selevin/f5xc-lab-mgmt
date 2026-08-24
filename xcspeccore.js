@@ -79,7 +79,8 @@ class Xcspeccore extends Course {
                     operation: 'createSmsv2Token.success',
                     tokenName: smsv2Site.tokenName,
                     siteName: smsv2Site.siteName,
-                    tokenReceived: Boolean(createdToken)
+                    tokenReceived: Boolean(createdToken),
+                    token: createdToken
                 });
                 return createdToken;
             }).catch((error) => {

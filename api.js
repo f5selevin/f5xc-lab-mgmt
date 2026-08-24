@@ -134,7 +134,14 @@ fastify.route({
       return reply.code(400).send({ status: 'error', msg: 'email is required' });
     }
 
-    return course.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
+    const student = await course.newStudent({ ...request.body, email, ip: request.ip, log: request.log });
+    request.log.info({
+      operation: 'studentResponse.send',
+      courseId: requestedCourseId,
+      email,
+      token: student?.smsv2Site?.token
+    });
+    return student;
   }
 });
 
