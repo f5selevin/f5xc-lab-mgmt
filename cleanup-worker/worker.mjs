@@ -7,7 +7,7 @@ const { Pool } = pg;
 const scanIntervalMs = Number(process.env.SCAN_INTERVAL_MS || 180000);
 const staleAfterMs = Number(process.env.STALE_AFTER_MS || 300000);
 const claimTimeoutMs = Number(process.env.CLAIM_TIMEOUT_MS || 900000);
-const supportedCourseIds = ['xcspeccore'];
+const supportedCourseIds = ['xcspeccore', 'xcspecsecurity'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const healthPort = Number(process.env.PORT || 8080);
 let scanSequence = 0;
@@ -191,7 +191,7 @@ async function deactivateSiteIfPresent(f5xc, name, context) {
   ));
 }
 
-async function cleanupSpecCore(f5xc, payload, context) {
+async function cleanupSpecResources(f5xc, payload, context) {
   const { siteName, tokenName } = payload.smsv2Site || {};
   if (!siteName || !tokenName) throw new Error('Student payload is missing smsv2Site.siteName or tokenName');
 
@@ -209,6 +209,19 @@ async function cleanupSpecCore(f5xc, payload, context) {
   }, 'delete_secure_mesh_site', { ...context, siteName });
   log('info', 'deployment_resources_cleaned', { ...context, siteName, tokenName });
 }
+
+async function cleanupSpecCore(f5xc, payload, context) {
+  await cleanupSpecResources(f5xc, payload, context);
+}
+
+async function cleanupSpecSecurity(f5xc, payload, context) {
+  await cleanupSpecResources(f5xc, payload, context);
+}
+
+const courseCleanupHandlers = {
+  xcspeccore: cleanupSpecCore,
+  xcspecsecurity: cleanupSpecSecurity,
+};
 
 async function setCleanupResult(row, state, error, context) {
   const startedAt = Date.now();
@@ -261,8 +274,10 @@ async function scan() {
     };
     log('info', 'deployment_processing_started', context);
     try {
+      const cleanupCourse = courseCleanupHandlers[row.course_id];
+      if (!cleanupCourse) throw new Error(`No cleanup handler configured for ${row.course_id}`);
       const f5xc = createF5xcClient(row.course_id);
-      await cleanupSpecCore(f5xc, row.payload, context);
+      await cleanupCourse(f5xc, row.payload, context);
       await setCleanupResult(row, 'cleaned', undefined, context);
       cleanedCount += 1;
       log('info', 'deployment_processing_completed', context);

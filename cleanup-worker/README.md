@@ -1,8 +1,8 @@
 # Lightsail stale-deployment cleanup worker
 
-This is a separate container from the lab-management API. Every three minutes it finds `xcspeccore` deployments whose latest ping is more than five minutes old. It deletes the generated Secure Mesh Site v2 (MCN) and registration token, then marks the student payload as cleaned.
+This is a separate container from the lab-management API. Every three minutes it finds `xcspeccore` and `xcspecsecurity` deployments whose latest ping is more than five minutes old. It deletes the generated Secure Mesh Site v2 (MCN) and registration token, then marks the student payload as cleaned.
 
-Only `xcspeccore` is supported. Other course records are never selected.
+`xcspeccore` and `xcspecsecurity` have separate cleanup handlers. They currently perform the same cleanup, allowing their behavior to diverge in the future. Other course records are never selected.
 
 ## Build
 

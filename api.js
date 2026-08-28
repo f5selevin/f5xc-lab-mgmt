@@ -16,7 +16,7 @@ const fastify = Fastify({
   },
 });
 
-const supportedCourseIds = ['xcspeccore'];
+const supportedCourseIds = ['xcspeccore', 'xcspecsecurity'];
 const courses = new Map();
 
 const normalizeDomain = (domain) => domain?.replace(/^https?:\/\//, '').replace(/\/$/, '');
