@@ -158,6 +158,33 @@ export async function getDashboardStudents() {
     return result.rows;
 }
 
+export async function getDashboardStudentItems({ email, courseId }) {
+    if (!pool) throw new Error('Database is not initialized');
+    const result = await pool.query(
+        `SELECT course_id AS "courseId",
+                student_hash AS "studentHash",
+                payload->>'email' AS email,
+                payload->>'namespace' AS namespace,
+                payload->>'deploymentId' AS "deploymentId",
+                payload->>'state' AS "studentState",
+                payload->>'lastSeen' AS "lastSeen",
+                payload->'cleanup'->>'state' AS "cleanupState",
+                payload->'cleanup'->>'claimedAt' AS "cleanupClaimedAt",
+                payload->'cleanup'->>'cleanedAt' AS "cleanedAt",
+                payload->'cleanup'->>'failedAt' AS "cleanupFailedAt",
+                payload->'cleanup'->>'error' AS "cleanupError",
+                payload->'smsv2Site'->>'siteName' AS "siteName",
+                created_at AS "createdAt",
+                updated_at AS "updatedAt"
+         FROM students
+         WHERE course_id = $1
+           AND lower(payload->>'email') IS NOT DISTINCT FROM lower($2::text)
+         ORDER BY COALESCE((payload->>'lastSeen')::timestamptz, updated_at, created_at) DESC`,
+        [courseId, email || null],
+    );
+    return result.rows;
+}
+
 export async function findDeployment({ deploymentId, namespace }) {
     if (!pool) throw new Error('Database is not initialized');
     const result = await pool.query(

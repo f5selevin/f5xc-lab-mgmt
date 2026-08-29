@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
-import { findDeployment, getDashboardStudents, updateDeploymentLastSeen } from './database.js';
+import { findDeployment, getDashboardStudentItems, getDashboardStudents, updateDeploymentLastSeen } from './database.js';
 import { validateUdfRequest } from './udf-validation.js';
-import { renderDashboard, requireDashboardPassword } from './dashboard.js';
+import { renderDashboard, renderDashboardItems, requireDashboardPassword } from './dashboard.js';
 
 const fastify = Fastify({
   logger: {
@@ -75,12 +75,32 @@ fastify.route({
   method: 'GET',
   url: '/dashboard',
   preHandler: requireDashboardPassword,
-  handler: async (_request, reply) => {
+  handler: async (request, reply) => {
     const students = await getDashboardStudents();
     return reply
       .header('Cache-Control', 'no-store')
       .type('text/html; charset=utf-8')
-      .send(renderDashboard(students));
+      .send(renderDashboard(students, request.query));
+  },
+});
+
+fastify.route({
+  method: 'GET',
+  url: '/dashboard/items',
+  preHandler: requireDashboardPassword,
+  handler: async (request, reply) => {
+    const { email, courseId } = request.query;
+    if (typeof courseId !== 'string' || !courseId) {
+      return reply.code(400).send('courseId is required');
+    }
+    const students = await getDashboardStudentItems({
+      email: typeof email === 'string' ? email : '',
+      courseId,
+    });
+    return reply
+      .header('Cache-Control', 'no-store')
+      .type('text/html; charset=utf-8')
+      .send(renderDashboardItems(students, request.query));
   },
 });
 
