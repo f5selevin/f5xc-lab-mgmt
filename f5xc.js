@@ -63,8 +63,17 @@ class F5xc {
 
     async createSmsv2Site({ name }) {
         await this.axios.post('/api/config/namespaces/system/securemesh_site_v2s', {
-            metadata: { name, namespace: 'system' },
-            spec: { kvm: { not_managed: {} } }
+            metadata: {
+                name,
+                namespace: 'system',
+                labels: { 'ves.io/siteName': name }
+            },
+            spec: {
+                kvm: { not_managed: {} },
+                custom_proxy_bypass: {
+                    proxy_bypass: ["ghcr.io", "githubusercontent.com", "github.com"]
+                },
+            }
         });
     }
 

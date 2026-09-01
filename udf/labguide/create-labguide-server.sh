@@ -82,7 +82,6 @@ WORKDIR /app/src
 COPY --from=dependencies /app/src/node_modules ./node_modules
 COPY src/ ./
 COPY docs/ /app/docs/
-RUN node -e 'const fs = require("fs"); const path = "components/rst-widgets.tsx"; const source = fs.readFileSync(path, "utf8"); const original = `const deploymentUrl = process.env.NODE_ENV === "development"\n  ? "http://localhost:5123/deployment"\n  : "http://metadata.udf/deployment";`; const replacement = `const deploymentUrl = process.env.DEPLOYMENT_URL || (process.env.NODE_ENV === "development"\n  ? "http://localhost:5123/deployment"\n  : "http://metadata.udf/deployment");`; if (!source.includes(original)) throw new Error("Unable to add DEPLOYMENT_URL support"); fs.writeFileSync(path, source.replace(original, replacement));'
 RUN npm run build
 
 FROM node:22-alpine AS runner
